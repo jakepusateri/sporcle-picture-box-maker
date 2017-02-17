@@ -27,7 +27,7 @@
             <input id="count" value="4"></input>
             <label for="columns">Columns</label>
             <input id="columns" value="2"></input>
-            <button>Save</button>
+            <button>Create</button>
         </form>
         <div class="grid-wrapper">
         </div>
@@ -48,6 +48,8 @@
             reader.onload = cb;
 
             reader.readAsDataURL(input.files[0]);
+        } else if (input.files.length === 0) {
+            // Do nothing, user cancelled
         } else {
             alert("Sorry - you're browser doesn't support the FileReader API");
         }
@@ -77,11 +79,8 @@
 
         document.getElementById(`upload-${n}`).onchange = function () {
             readFile(this, function (e) {
-                //$('.upload-demo').addClass('ready');
                 croppie.bind({
                     url: e.target.result
-                }).then(function(){
-                    console.log('bind complete');
                 });
             });
         };
@@ -93,15 +92,21 @@
         let height, width;
         document.getElementById('dimensions-form').onsubmit = function(e) {
             e.preventDefault();
-            croppies = [];
             height = parseInt(document.getElementById('height').value, 10);
             width = parseInt(document.getElementById('width').value, 10);
             const count = parseInt(document.getElementById('count').value, 10);
             const columns = parseInt(document.getElementById('columns').value, 10);
-            document.querySelector('.grid-wrapper').innerHTML = '';
-            document.querySelector('.grid-wrapper').setAttribute('style', `width: ${width * (columns + 1)}px`);
+            const gridWrapper = document.querySelector('.grid-wrapper');
+            gridWrapper.setAttribute('style', `width: ${width * (columns + 1)}px`);
             for (var i = 0; i < count; i++) {
-                croppies.push(createSingleImageBox(i, width, height));
+                if (!croppies[i]) {
+                    croppies.push(createSingleImageBox(i, width, height));
+                }
+            }
+            croppies = croppies.slice(0, count);
+            var length = gridWrapper.children.length;
+            for (var j = count; j < length; j++) {
+                gridWrapper.children[gridWrapper.children.length - 1].remove();
             }
         };
 
