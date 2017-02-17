@@ -1,0 +1,138 @@
+<!doctype html>
+
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <title>Sporcle Picture Box Creator</title>
+    <meta name="description" content="Easily create picture box images for sporcle">
+    <link rel="stylesheet" href="https://unpkg.com/croppie@2.4.0/croppie.css"/>
+</head>
+
+<body>
+    <style>
+        input { max-width: 100px }
+        #dimensions-form { padding-bottom: 1em }
+        .grid-wrapper { flex-flow: row wrap; }
+        .container { flex: 1 1 50%; display: inline-block; margin-bottom: 2em; }
+        .cr-viewport { border: 1px black solid !important; }
+        .controls { display: block; padding-top: 1em }
+    </style>
+    <div class="demo-wrap upload-demo">
+        <form id="dimensions-form">
+            <label for="height">Height</label>
+            <input id="height" value="150"></input>
+            <label for="width">Width</label>
+            <input id="width" value="150"></input>
+            <label for="count">Count</label>
+            <input id="count" value="4"></input>
+            <label for="columns">Columns</label>
+            <input id="columns" value="2"></input>
+            <button>Save</button>
+        </form>
+        <div class="grid-wrapper">
+        </div>
+    </div>
+    <p></p>
+    <section class="controls">
+        <button id="final-render">Render</button>
+        <a id="download-link" href="#" download="export.jpg">Download</a>
+    </section>
+    <img id="result"/>
+    <canvas id="outcanvas" style="display: none"/>
+    <script src="https://unpkg.com/croppie@2.4.0"></script>
+    <script>
+    function readFile(input, cb) {
+        if (input.files && input.files[0]) {
+            var reader = new FileReader();
+
+            reader.onload = cb;
+
+            reader.readAsDataURL(input.files[0]);
+        } else {
+            alert("Sorry - you're browser doesn't support the FileReader API");
+        }
+    }
+
+    function createSingleImageBox(n, width, height) {
+        var container = document.createElement('div');
+        container.classList.add('container');
+        const style = `height: ${height + 2}px; width: ${width + 2}px`;
+
+        container.innerHTML = `
+        <div class="upload-demo-wrap">
+            <div id="upload-demo-${n}" style="${style}"></div>
+        </div>
+        <input type="file" id="upload-${n}" value="Choose a file" accept="image/*" />
+        </div>
+        `;
+        document.querySelector('.grid-wrapper').appendChild(container);
+
+        var croppie = new Croppie(document.getElementById(`upload-demo-${n}`), {
+            viewport: {
+                width,
+                height,
+                type: 'square'
+            }
+        });
+
+        document.getElementById(`upload-${n}`).onchange = function () {
+            readFile(this, function (e) {
+                //$('.upload-demo').addClass('ready');
+                croppie.bind({
+                    url: e.target.result
+                }).then(function(){
+                    console.log('bind complete');
+                });
+            });
+        };
+        return croppie;
+    }
+
+    (function init() {
+        let croppies = [];
+        let height, width;
+        document.getElementById('dimensions-form').onsubmit = function(e) {
+            e.preventDefault();
+            croppies = [];
+            height = parseInt(document.getElementById('height').value, 10);
+            width = parseInt(document.getElementById('width').value, 10);
+            const count = parseInt(document.getElementById('count').value, 10);
+            const columns = parseInt(document.getElementById('columns').value, 10);
+            document.querySelector('.grid-wrapper').innerHTML = '';
+            document.querySelector('.grid-wrapper').setAttribute('style', `width: ${width * (columns + 1)}px`);
+            for (var i = 0; i < count; i++) {
+                croppies.push(createSingleImageBox(i, width, height));
+            }
+        };
+
+        document.getElementById('final-render').onclick = function render() {
+            var c = document.getElementById("outcanvas");
+            c.width = width;
+            c.height = height * croppies.length;
+            var ctx = c.getContext("2d");
+            ctx.fillStyle = 'white';
+            ctx.fillRect(0, 0, c.width, c.height);
+            const drawPromises = [];
+            for (var i = 0; i < croppies.length; i++) {
+                const dy = i * height;
+                drawPromises.push(croppies[i].result('rawcanvas').then(function (rawcanvas) {
+                    ctx.drawImage(rawcanvas, 0, dy, width, height);
+                }));
+            }
+            Promise.all(drawPromises).then(function exportImg() {
+                var c = document.getElementById("outcanvas");
+                var img = c.toDataURL("image/jpeg", 1);
+                var imgnode = document.getElementById('result');
+                imgnode.src = img;
+                imgnode.width = width;
+                imgnode.height = height * croppies.length;
+
+                const link = document.getElementById("download-link");
+                link.href = img;
+            });
+        }
+    })();
+
+    </script>
+</body>
+</html>
