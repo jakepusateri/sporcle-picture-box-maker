@@ -10,25 +10,29 @@
 
 <body>
     <style>
-        input { max-width: 100px }
-        #dimensions-form { padding-bottom: 1em }
+        input { max-width: 100px; }
+        .controls-form { padding-bottom: 1em }
+        #dimensions-form { display: inline; }
         .grid-wrapper { flex-flow: row wrap; }
         .container { flex: 1 1 50%; display: inline-block; margin-bottom: 2em; }
         .cr-viewport { border: 1px black solid !important; }
         .controls { display: block; padding-top: 1em }
     </style>
     <div class="demo-wrap upload-demo">
-        <form id="dimensions-form">
-            <label for="height">Height</label>
-            <input id="height" value="150"></input>
-            <label for="width">Width</label>
-            <input id="width" value="150"></input>
-            <label for="count">Count</label>
-            <input id="count" value="4"></input>
-            <label for="columns">Columns</label>
-            <input id="columns" value="2"></input>
-            <button>Create</button>
-        </form>
+        <div class="controls-form">
+            <form id="dimensions-form">
+                <label for="width">Width</label>
+                <input id="width" value="150"></input>
+                <label for="height">Height</label>
+                <input id="height" value="150"></input>
+                <label for="count">Count</label>
+                <input id="count" value="4"></input>
+                <label for="columns">Columns</label>
+                <input id="columns" value="2"></input>
+                <button>Create</button>
+            </form>
+            <button id="reset-all">Reset</button>
+        </div>
         <div class="grid-wrapper">
         </div>
     </div>
@@ -109,7 +113,10 @@
                 gridWrapper.children[gridWrapper.children.length - 1].remove();
             }
         };
-
+        document.getElementById('reset-all').onclick = function reset() {
+            document.querySelector('.grid-wrapper').innerHTML = '';
+            croppies = [];
+        };
         document.getElementById('final-render').onclick = function render() {
             var c = document.getElementById("outcanvas");
             c.width = width;
