@@ -80,7 +80,6 @@
                 type: 'square'
             }
         });
-
         document.getElementById(`upload-${n}`).onchange = function () {
             readFile(this, function (e) {
                 croppie.bind({
@@ -116,6 +115,10 @@
         document.getElementById('reset-all').onclick = function reset() {
             document.querySelector('.grid-wrapper').innerHTML = '';
             croppies = [];
+            const img = document.getElementById('result');
+            img.src = '';
+            img.width = '';
+            img.height = '';
         };
         document.getElementById('final-render').onclick = function render() {
             var c = document.getElementById("outcanvas");
