@@ -13,10 +13,11 @@
         input { max-width: 100px; }
         .controls-form { padding-bottom: 1em }
         #dimensions-form { display: inline; }
+        #download-link { display: block; }
         .grid-wrapper { flex-flow: row wrap; }
         .container { flex: 1 1 50%; display: inline-block; margin-bottom: 2em; }
         .cr-viewport { border: 1px black solid !important; }
-        .controls { display: block; padding-top: 1em }
+        .controls { display: block; padding-top: 1em; padding-bottom: 1em; }
     </style>
     <div class="demo-wrap upload-demo">
         <div class="controls-form">
@@ -39,8 +40,9 @@
     <p></p>
     <section class="controls">
         <button id="final-render">Render</button>
-        <a id="download-link" href="#" target="_blank" download="export.jpg">Download</a>
+        <label>Quality</label><input id="quality" value="1.0" type="number" step="0.01" min="0.1" max="1.0">
     </section>
+    <a id="download-link" href="#" target="_blank" download="export.jpg">Download</a>
     <img id="result"/>
     <canvas id="outcanvas" style="display: none"/>
     <script src="https://unpkg.com/croppie@2.4.0"></script>
@@ -138,7 +140,8 @@
             }
             Promise.all(drawPromises).then(function exportImg() {
                 var c = document.getElementById("outcanvas");
-                var img = c.toDataURL("image/jpeg", 1);
+                var quality = parseFloat(document.getElementById('quality').value);
+                var img = c.toDataURL("image/jpeg", quality);
                 var imgnode = document.getElementById('result');
                 imgnode.src = img;
                 imgnode.width = width;
