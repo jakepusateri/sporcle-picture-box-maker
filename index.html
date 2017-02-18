@@ -129,10 +129,12 @@
             ctx.fillRect(0, 0, c.width, c.height);
             var drawPromises = [];
             for (var i = 0; i < croppies.length; i++) {
-                var dy = i * height;
-                drawPromises.push(croppies[i].result('rawcanvas').then(function (rawcanvas) {
-                    ctx.drawImage(rawcanvas, 0, dy, width, height);
-                }));
+                (function() {
+                    var dy = i * height;
+                    drawPromises.push(croppies[i].result('rawcanvas').then(function (rawcanvas) {
+                        ctx.drawImage(rawcanvas, 0, dy, width, height);
+                    }));
+                })();
             }
             Promise.all(drawPromises).then(function exportImg() {
                 var c = document.getElementById("outcanvas");
