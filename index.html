@@ -62,7 +62,7 @@
     function createSingleImageBox(n, width, height) {
         var container = document.createElement('div');
         container.classList.add('container');
-        const style = `height: ${height + 2}px; width: ${width + 2}px`;
+        var style = `height: ${height + 2}px; width: ${width + 2}px`;
 
         container.innerHTML = `
         <div class="upload-demo-wrap">
@@ -91,15 +91,15 @@
     }
 
     (function init() {
-        let croppies = [];
-        let height, width;
+        var croppies = [];
+        var height, width;
         document.getElementById('dimensions-form').onsubmit = function(e) {
             e.preventDefault();
             height = parseInt(document.getElementById('height').value, 10);
             width = parseInt(document.getElementById('width').value, 10);
-            const count = parseInt(document.getElementById('count').value, 10);
-            const columns = parseInt(document.getElementById('columns').value, 10);
-            const gridWrapper = document.querySelector('.grid-wrapper');
+            var count = parseInt(document.getElementById('count').value, 10);
+            var columns = parseInt(document.getElementById('columns').value, 10);
+            var gridWrapper = document.querySelector('.grid-wrapper');
             gridWrapper.setAttribute('style', `width: ${width * (columns + 1)}px`);
             for (var i = 0; i < count; i++) {
                 if (!croppies[i]) {
@@ -115,7 +115,7 @@
         document.getElementById('reset-all').onclick = function reset() {
             document.querySelector('.grid-wrapper').innerHTML = '';
             croppies = [];
-            const img = document.getElementById('result');
+            var img = document.getElementById('result');
             img.src = '';
             img.width = '';
             img.height = '';
@@ -127,9 +127,9 @@
             var ctx = c.getContext("2d");
             ctx.fillStyle = 'white';
             ctx.fillRect(0, 0, c.width, c.height);
-            const drawPromises = [];
+            var drawPromises = [];
             for (var i = 0; i < croppies.length; i++) {
-                const dy = i * height;
+                var dy = i * height;
                 drawPromises.push(croppies[i].result('rawcanvas').then(function (rawcanvas) {
                     ctx.drawImage(rawcanvas, 0, dy, width, height);
                 }));
@@ -142,7 +142,7 @@
                 imgnode.width = width;
                 imgnode.height = height * croppies.length;
 
-                const link = document.getElementById("download-link");
+                var link = document.getElementById("download-link");
                 link.href = img;
             });
         }
