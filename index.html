@@ -12,6 +12,7 @@
     <style>
         input { max-width: 100px; }
         .controls-form { padding-bottom: 1em }
+        .hide { display: none }
         #dimensions-form { display: inline; }
         #download-link { display: block; }
         .grid-wrapper { flex-flow: row wrap; }
@@ -118,9 +119,8 @@
             document.querySelector('.grid-wrapper').innerHTML = '';
             croppies = [];
             var img = document.getElementById('result');
-            img.src = '';
-            img.width = '';
-            img.height = '';
+            img.classList.add('hide')
+            document.querySelector('#download-link').classList.add('hide');
         };
         document.getElementById('final-render').onclick = function render() {
             var c = document.getElementById("outcanvas");
@@ -143,11 +143,13 @@
                 var quality = parseFloat(document.getElementById('quality').value);
                 var img = c.toDataURL("image/jpeg", quality);
                 var imgnode = document.getElementById('result');
+                imgnode.classList.remove('hide');
                 imgnode.src = img;
                 imgnode.width = width;
                 imgnode.height = height * croppies.length;
 
                 var link = document.getElementById("download-link");
+                link.classList.remove('hide');
                 link.href = img;
             });
         }
