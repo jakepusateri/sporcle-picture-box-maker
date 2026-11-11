@@ -4,10 +4,10 @@
 
 <head>
     <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Sporcle Picture Box Creator</title>
     <meta name="description" content="Easily create picture box images for sporcle">
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/croppie/2.6.5/croppie.min.css" />
-</head>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/croppie/2.6.5/croppie.min.css" integrity="sha384-dZPUTLWa5q9T8FxOz33GhGJIqPrwWyoZ4Zyh5KkQ73blz5NmzSgqBbNyclKEJROy" crossorigin="anonymous">
 <script>
     /**
  * hermite-resize - Canvas image resize/resample using Hermite filter with JavaScript.
@@ -287,7 +287,7 @@
                                     weights_alpha += weight;
                                     //colors
                                     if (source[pos_x + 3] < 255)
-                                        weight = weight * source[pos_x + 3] / 250;
+                                        weight = weight * source[pos_x + 3] / 255;
                                     gx_r += weight * source[pos_x];
                                     gx_g += weight * source[pos_x + 1];
                                     gx_b += weight * source[pos_x + 2];
@@ -320,6 +320,7 @@
          * @param {int} height
          * @param {boolean} resize_canvas if true, canvas will be resized. Optional.
          */
+        var cachedKernel;
         this.resample_single = function (canvas, width, height, resize_canvas) {
             var width_source = canvas.width;
             var height_source = canvas.height;
@@ -336,56 +337,61 @@
             var img2 = ctx.createImageData(width, height);
             var data = img.data;
             var data2 = img2.data;
+            var key = [width_source, height_source, width, height].join(',');
+            if (!cachedKernel || cachedKernel.key !== key) {
+                var capacity = width * height * (ratio_w_half + 1) * (ratio_h_half + 1);
+                var offsets = new Uint32Array(capacity);
+                var coefficients = new Float64Array(capacity);
+                var starts = new Uint32Array(width * height + 1);
+                var totals = new Float64Array(width * height);
+                var length = 0;
+                for (var row = 0; row < height; row++) {
+                    for (var col = 0; col < width; col++) {
+                        starts[row * width + col] = length;
+                        var cy = row * ratio_h;
+                        var cx = col * ratio_w;
+                        var yEnd = Math.min(height_source, Math.ceil((row + 1) * ratio_h), Math.ceil(cy + ratio_h_half));
+                        var xEnd = Math.min(width_source, Math.ceil((col + 1) * ratio_w), Math.ceil(cx + ratio_w_half));
+                        for (var y = Math.floor(cy); y < yEnd; y++) {
+                            var yDistance = (cy - y) / ratio_h_half;
+                            for (var x = Math.floor(cx); x < xEnd; x++) {
+                                var xDistance = (cx - x) / ratio_w_half;
+                                var distance = Math.sqrt(yDistance * yDistance + xDistance * xDistance);
+                                if (distance >= 1) continue;
+                                offsets[length] = 4 * (x + y * width_source);
+                                var coefficient = 2 * distance * distance * distance - 3 * distance * distance + 1;
+                                coefficients[length++] = coefficient;
+                                totals[row * width + col] += coefficient;
+                            }
+                        }
+                    }
+                }
+                starts[width * height] = length;
+                cachedKernel = { key: key, offsets: offsets, coefficients: coefficients, starts: starts, totals: totals };
+            }
 
             for (var j = 0; j < height; j++) {
                 for (var i = 0; i < width; i++) {
                     var x2 = (i + j * width) * 4;
-                    var weight = 0;
-                    var weights = 0;
-                    var weights_alpha = 0;
                     var gx_r = 0;
                     var gx_g = 0;
                     var gx_b = 0;
                     var gx_a = 0;
-                    var center_y = j * ratio_h;
-
-                    var xx_start = Math.floor(i * ratio_w);
-                    var xx_stop = Math.ceil((i + 1) * ratio_w);
-                    var yy_start = Math.floor(j * ratio_h);
-                    var yy_stop = Math.ceil((j + 1) * ratio_h);
-                    xx_stop = Math.min(xx_stop, width_source);
-                    yy_stop = Math.min(yy_stop, height_source);
-
-                    for (var yy = yy_start; yy < yy_stop; yy++) {
-                        var dy = Math.abs(center_y - yy) / ratio_h_half;
-                        var center_x = i * ratio_w;
-                        var w0 = dy * dy; //pre-calc part of w
-                        for (var xx = xx_start; xx < xx_stop; xx++) {
-                            var dx = Math.abs(center_x - xx) / ratio_w_half;
-                            var w = Math.sqrt(w0 + dx * dx);
-                            if (w >= 1) {
-                                //pixel too far
-                                continue;
-                            }
-                            //hermite filter
-                            weight = 2 * w * w * w - 3 * w * w + 1;
-                            var pos_x = 4 * (xx + yy * width_source);
-                            //alpha
-                            gx_a += weight * data[pos_x + 3];
-                            weights_alpha += weight;
-                            //colors
-                            if (data[pos_x + 3] < 255)
-                                weight = weight * data[pos_x + 3] / 250;
-                            gx_r += weight * data[pos_x];
-                            gx_g += weight * data[pos_x + 1];
-                            gx_b += weight * data[pos_x + 2];
-                            weights += weight;
-                        }
+                    var pixel = i + j * width;
+                    for (var k = cachedKernel.starts[pixel]; k < cachedKernel.starts[pixel + 1]; k++) {
+                        var position = cachedKernel.offsets[k];
+                        var alphaWeight = cachedKernel.coefficients[k] * data[position + 3];
+                        var colorWeight = alphaWeight / 255;
+                        gx_a += alphaWeight;
+                        gx_r += colorWeight * data[position];
+                        gx_g += colorWeight * data[position + 1];
+                        gx_b += colorWeight * data[position + 2];
                     }
+                    var weights = gx_a / 255;
                     data2[x2] = gx_r / weights;
                     data2[x2 + 1] = gx_g / weights;
                     data2[x2 + 2] = gx_b / weights;
-                    data2[x2 + 3] = gx_a / weights_alpha;
+                    data2[x2 + 3] = gx_a / cachedKernel.totals[pixel];
                 }
             }
             //clear and resize canvas
@@ -403,6 +409,7 @@
     }
     window.HERMITE = new Hermite();
 </script>
+</head>
 
 <body>
     <style>
@@ -427,7 +434,9 @@
         }
 
         .grid-wrapper {
-            flex-flow: row wrap;
+            display: grid;
+            gap: 1em;
+            width: max-content;
         }
 
         .container {
@@ -450,13 +459,13 @@
         <div class="controls-form">
             <form id="dimensions-form">
                 <label for="width">Width</label>
-                <input id="width" value="150"></input>
+                <input id="width" value="150" type="number" min="1" max="2000" required>
                 <label for="height">Height</label>
-                <input id="height" value="150"></input>
+                <input id="height" value="150" type="number" min="1" max="2000" required>
                 <label for="count">Count</label>
-                <input id="count" value="4"></input>
-                <label for="columns">Columns</label>
-                <input id="columns" value="2"></input>
+                <input id="count" value="4" type="number" min="1" max="100" required>
+                <label for="columns">Preview columns</label>
+                <input id="columns" value="2" type="number" min="1" max="100" required>
                 <button>Create</button>
             </form>
             <button id="reset-all">Reset</button>
@@ -465,27 +474,45 @@
         </div>
     </div>
     <p></p>
+    <p id="message" role="status" aria-live="polite"></p>
     <section class="controls">
         <button id="final-render">Render</button>
-        <label>Quality</label><input id="quality" value="1.0" type="number" step="0.01" min="0.1" max="1.0">
+        <label for="quality">Quality</label><input id="quality" value="1.0" type="number" step="0.01" min="0.1" max="1.0" required>
     </section>
     <a id="download-link" class="hide" href="#" target="_blank" download="export.jpg">Download</a>
     <img id="result" />
-    <canvas id="outcanvas" style="display: none" />
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/croppie/2.6.5/croppie.min.js"></script>
+    <canvas id="outcanvas" style="display: none"></canvas>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/croppie/2.6.5/croppie.min.js" integrity="sha384-PSdrudFH709o8Gc8xYqZ/1bIX4opybpFkf9IVVv1/JuniUUMus3xorl0m2NLhb4P" crossorigin="anonymous"></script>
     <script>
+        function showMessage(message) {
+            document.getElementById('message').textContent = message;
+        }
+
         function readFile(input, cb) {
-            if (input.files && input.files[0]) {
-                var reader = new FileReader();
-
-                reader.onload = cb;
-
-                reader.readAsDataURL(input.files[0]);
-            } else if (input.files.length === 0) {
-                // Do nothing, user cancelled
-            } else {
-                alert("Sorry - you're browser doesn't support the FileReader API");
+            if (!input.files || !window.FileReader) {
+                showMessage('Your browser does not support file uploads.');
+                return;
             }
+            if (!input.files.length) return;
+            var reader = new FileReader();
+            reader.onload = function () { cb(reader.result); };
+            reader.onerror = function () { showMessage('Could not read that image.'); };
+            reader.readAsDataURL(input.files[0]);
+        }
+
+        async function bindImage(box, url) {
+            var image = new Image();
+            image.src = url;
+            await image.decode();
+            if (!box.container.isConnected) return;
+            var bitmap = await createImageBitmap(image);
+            if (!box.container.isConnected) { bitmap.close(); return; }
+            await box.croppie.bind({ url: url });
+            if (!box.container.isConnected) { bitmap.close(); return; }
+            if (box.bitmap) box.bitmap.close();
+            box.bitmap = bitmap;
+            box.image = image;
+            box.url = url;
         }
 
         function createSingleImageBox(n, width, height) {
@@ -498,7 +525,6 @@
             <div id="upload-demo-${n}" style="${style}"></div>
         </div>
         <input type="file" id="upload-${n}" value="Choose a file" accept="image/*" />
-        </div>
         `;
             document.querySelector('.grid-wrapper').appendChild(container);
 
@@ -509,92 +535,157 @@
                     type: 'square'
                 },
             });
+            var box = { croppie: croppie, container: container, image: null, bitmap: null, url: null, pending: null };
             document.getElementById(`upload-${n}`).onchange = function () {
-                readFile(this, function (e) {
-                    croppie.bind({
-                        url: e.target.result
-                    });
+                readFile(this, function (url) {
+                    box.pending = bindImage(box, url).catch(function () { showMessage('Could not load that image.'); });
                 });
             };
-            return croppie;
+            return box;
         }
 
         (function init() {
-            var croppies = [];
+            var boxes = [];
             var height, width;
-            document.getElementById('dimensions-form').onsubmit = function (e) {
+            var downloadURL;
+            var revision = 0;
+            var form = document.getElementById('dimensions-form');
+            form.noValidate = true;
+
+            function hideOutput() {
+                revision++;
+                document.getElementById('result').classList.add('hide');
+                var link = document.getElementById('download-link');
+                link.classList.add('hide');
+                link.removeAttribute('href');
+                if (downloadURL) URL.revokeObjectURL(downloadURL);
+                downloadURL = null;
+            }
+
+            function settings() {
+                var values = {};
+                var limits = { width: [1, 2000], height: [1, 2000], count: [1, 100], columns: [1, 100], quality: [0.1, 1] };
+                for (var key in limits) {
+                    var input = document.getElementById(key);
+                    var value = Number(input.value);
+                    if (!input.value.trim() || !Number.isFinite(value) || value < limits[key][0] || value > limits[key][1] || (key !== 'quality' && !Number.isInteger(value))) {
+                        showMessage(key + ' must be ' + (key === 'quality' ? 'a number' : 'a whole number') + ' between ' + limits[key][0] + ' and ' + limits[key][1] + '.');
+                        return null;
+                    }
+                    values[key] = value;
+                }
+                showMessage('');
+                return values;
+            }
+
+            form.onsubmit = async function (e) {
                 e.preventDefault();
-                height = parseInt(document.getElementById('height').value, 10);
-                width = parseInt(document.getElementById('width').value, 10);
-                var count = parseInt(document.getElementById('count').value, 10);
-                var columns = parseInt(document.getElementById('columns').value, 10);
+                var values = settings();
+                if (!values) return;
+                hideOutput();
+                var resize = width !== values.width || height !== values.height;
+                height = values.height;
+                width = values.width;
                 var gridWrapper = document.querySelector('.grid-wrapper');
-                gridWrapper.setAttribute('style', `width: ${width * (columns + 1)}px`);
-                for (var i = 0; i < count; i++) {
-                    if (!croppies[i]) {
-                        croppies.push(createSingleImageBox(i, width, height));
+                gridWrapper.style.gridTemplateColumns = `repeat(${values.columns}, ${width + 2}px)`;
+                for (var j = boxes.length - 1; j >= 0; j--) {
+                    if (resize || j >= values.count) {
+                        boxes[j].croppie.destroy();
+                        boxes[j].container.remove();
+                        if (boxes[j].bitmap) boxes[j].bitmap.close();
                     }
                 }
-                croppies = croppies.slice(0, count);
-                var length = gridWrapper.children.length;
-                for (var j = count; j < length; j++) {
-                    gridWrapper.children[gridWrapper.children.length - 1].remove();
+                var previous = boxes;
+                boxes = resize ? [] : boxes.slice(0, values.count);
+                for (var i = 0; i < values.count; i++) {
+                    if (!boxes[i]) {
+                        var box = createSingleImageBox(i, width, height);
+                        boxes.push(box);
+                        if (previous[i] && previous[i].url) {
+                            box.pending = bindImage(box, previous[i].url).catch(function () { showMessage('Could not reload that image.'); });
+                        }
+                    }
                 }
             };
             document.getElementById('reset-all').onclick = function reset() {
-                document.querySelector('.grid-wrapper').innerHTML = '';
-                croppies = [];
-                var img = document.getElementById('result');
-                img.classList.add('hide')
-                document.querySelector('#download-link').classList.add('hide');
+                boxes.forEach(function (box) { box.croppie.destroy(); box.container.remove(); if (box.bitmap) box.bitmap.close(); });
+                boxes = [];
+                hideOutput();
+                showMessage('');
             };
-            document.getElementById('final-render').onclick = function render() {
+            document.getElementById('final-render').onclick = async function render() {
+                if (!boxes.length) {
+                    hideOutput();
+                    showMessage('Create some boxes before rendering.');
+                    return;
+                }
+                var values = settings();
+                if (!values) return;
+                var current = ++revision;
+                await Promise.all(boxes.map(function (box) { return box.pending; }));
+                if (current !== revision) return;
                 var c = document.getElementById("outcanvas");
                 c.width = width;
-                c.height = height * croppies.length;
+                c.height = height * boxes.length;
                 var ctx = c.getContext("2d");
                 ctx.fillStyle = 'white';
                 ctx.fillRect(0, 0, c.width, c.height);
-                for (var i = 0; i < croppies.length; i++) {
+                for (var i = 0; i < boxes.length; i++) {
                     var dy = i * height;
-                    var croppie = croppies[i];
-                    if (!croppie.data.url) {
-                        continue;
-                    }
-                    var originalWidth = croppie._originalImageWidth
-                    var originalHeight = croppie._originalImageHeight;
-                    var croppieData = croppie.get();
+                    var box = boxes[i];
+                    if (!box.image) continue;
+                    var croppieData = box.croppie.get();
                     var zoom = croppieData.zoom;
                     var points = croppieData.points;
+                    var sx = Math.floor(points[0] * zoom) / zoom;
+                    var sy = Math.floor(points[1] * zoom) / zoom;
+                    if (zoom > 1) {
+                        ctx.imageSmoothingEnabled = true;
+                        ctx.imageSmoothingQuality = 'high';
+                        ctx.drawImage(box.bitmap, sx, sy, width / zoom, height / zoom, 0, dy, width, height);
+                        continue;
+                    }
+                    var margin = Math.max(2, 1 / zoom);
+                    var left = Math.max(0, Math.floor(sx - margin));
+                    var top = Math.max(0, Math.floor(sy - margin));
+                    var right = Math.min(box.image.naturalWidth, Math.ceil(sx + width / zoom + margin));
+                    var bottom = Math.min(box.image.naturalHeight, Math.ceil(sy + height / zoom + margin));
                     var temp_canvas = document.createElement("canvas");
-                    temp_canvas.width = originalWidth;
-                    temp_canvas.height = originalHeight;
-                    var temp_ctx = temp_canvas.getContext("2d");
-                    temp_ctx.drawImage(croppie.elements.img, 0, 0);
-
-                    tmpwidth = originalWidth * zoom;
-                    tmpheight = originalHeight * zoom;
-                    tmpwidth = Math.round(tmpwidth);
-                    tmpheight = Math.round(tmpheight);
+                    if (width / zoom > width * 4 && height / zoom > height * 4) {
+                        temp_canvas.width = width * 4;
+                        temp_canvas.height = height * 4;
+                        var shrink_ctx = temp_canvas.getContext('2d');
+                        shrink_ctx.imageSmoothingEnabled = true;
+                        shrink_ctx.imageSmoothingQuality = 'high';
+                        shrink_ctx.drawImage(box.bitmap, sx, sy, width / zoom, height / zoom, 0, 0, temp_canvas.width, temp_canvas.height);
+                        HERMITE.resample_single(temp_canvas, width, height, true);
+                        ctx.drawImage(temp_canvas, 0, dy);
+                        continue;
+                    }
+                    temp_canvas.width = right - left;
+                    temp_canvas.height = bottom - top;
+                    var temp_ctx = temp_canvas.getContext("2d", { willReadFrequently: true });
+                    temp_ctx.drawImage(box.bitmap, left, top, right - left, bottom - top, 0, 0, right - left, bottom - top);
+                    var tmpwidth = Math.max(1, Math.round(temp_canvas.width * zoom));
+                    var tmpheight = Math.max(1, Math.round(temp_canvas.height * zoom));
                     HERMITE.resample_single(temp_canvas, tmpwidth, tmpheight, true);
-
-                    ctx.drawImage(temp_canvas, Math.floor(points[0] * zoom), Math.floor(points[1] * zoom), width, height, 0, dy, width, height);
+                    ctx.drawImage(temp_canvas, (sx - left) * zoom, (sy - top) * zoom, width, height, 0, dy, width, height);
                 }
-                function exportImg() {
-                    var c = document.getElementById("outcanvas");
-                    var quality = parseFloat(document.getElementById('quality').value);
-                    var img = c.toDataURL("image/jpeg", quality);
+                c.toBlob(function (blob) {
+                    if (current !== revision) return;
+                    if (!blob) { hideOutput(); showMessage('Could not export that image.'); return; }
+                    if (downloadURL) URL.revokeObjectURL(downloadURL);
+                    downloadURL = URL.createObjectURL(blob);
                     var imgnode = document.getElementById('result');
                     imgnode.classList.remove('hide');
-                    imgnode.src = img;
+                    imgnode.src = downloadURL;
                     imgnode.width = width;
-                    imgnode.height = height * croppies.length;
-
+                    imgnode.height = height * boxes.length;
                     var link = document.getElementById("download-link");
                     link.classList.remove('hide');
-                    link.href = img;
-                }
-                exportImg();
+                    link.href = downloadURL;
+                    link.download = `picture-box-${width}x${height}.jpg`;
+                }, 'image/jpeg', values.quality);
             }
         })();
 
