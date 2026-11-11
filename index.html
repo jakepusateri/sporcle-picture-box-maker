@@ -444,7 +444,7 @@
         .section-heading { justify-content: space-between; margin: 0 0 14px; }
         .grid-scroll { overflow-x: auto; max-width: 100%; min-width: 0; padding: 3px 3px 12px; }
         .grid-wrapper { display: grid; gap: 16px; }
-        .container { padding: 16px; min-width: 0; }
+        .container { position: relative; padding: 16px; min-width: 0; }
         .box-heading { justify-content: space-between; margin-bottom: 16px; min-height: 30px; }
         .badge { border-radius: 6px; background: var(--soft); color: var(--accent); font-weight: 750; padding: 3px 9px; }
         .box-actions { display: flex; gap: 4px; visibility: hidden; }
@@ -511,6 +511,43 @@
             reader.onload = function () { cb(reader.result); };
             reader.onerror = function () { showMessage('Could not read that image.'); };
             reader.readAsDataURL(input.files[0]);
+        }
+
+        async function exportJPEG(canvas, quality) {
+            if (typeof OffscreenCanvas !== 'function' || typeof Worker !== 'function') {
+                return new Promise(function (resolve) { canvas.toBlob(resolve, 'image/jpeg', quality); });
+            }
+            var image = await createImageBitmap(canvas);
+            var workerURL, worker;
+            try {
+                workerURL = URL.createObjectURL(new Blob([`
+                    self.onmessage = async function (event) {
+                        try {
+                            var image = event.data.image;
+                            var canvas = new OffscreenCanvas(image.width, image.height);
+                            canvas.getContext('2d').drawImage(image, 0, 0);
+                            image.close();
+                            var blob = await canvas.convertToBlob({ type: 'image/jpeg', quality: event.data.quality });
+                            self.postMessage({ blob: blob });
+                        } catch (error) {
+                            self.postMessage({ error: error.message });
+                        }
+                    };
+                `], { type: 'text/javascript' }));
+                worker = new Worker(workerURL);
+                return await new Promise(function (resolve, reject) {
+                    worker.onmessage = function (event) {
+                        if (event.data.error) reject(new Error(event.data.error));
+                        else resolve(event.data.blob);
+                    };
+                    worker.onerror = function (event) { event.preventDefault(); reject(new Error(event.message)); };
+                    worker.postMessage({ image: image, quality: quality }, [image]);
+                });
+            } finally {
+                if (worker) worker.terminate();
+                if (workerURL) URL.revokeObjectURL(workerURL);
+                image.close();
+            }
         }
 
         async function bindImage(box, url) {
@@ -710,6 +747,7 @@
                 showMessage('');
             };
             document.getElementById('final-render').onclick = async function render() {
+                await bulkQueue;
                 if (!boxes.length) {
                     hideOutput();
                     showMessage('Create some boxes before rendering.');
@@ -767,23 +805,28 @@
                     HERMITE.resample_single(temp_canvas, tmpwidth, tmpheight, true);
                     ctx.drawImage(temp_canvas, (sx - left) * zoom, (sy - top) * zoom, width, height, 0, dy, width, height);
                 }
-                c.toBlob(function (blob) {
-                    if (current !== revision) return;
-                    if (!blob) { hideOutput(); showMessage('Could not export that image.'); return; }
-                    if (downloadURL) URL.revokeObjectURL(downloadURL);
-                    downloadURL = URL.createObjectURL(blob);
-                    var imgnode = document.getElementById('result');
-                    imgnode.classList.remove('hide');
-                    document.getElementById('result-panel').classList.remove('hide');
-                    imgnode.src = downloadURL;
-                    imgnode.width = width;
-                    imgnode.height = height * boxes.length;
-                    var link = document.getElementById("download-link");
-                    link.classList.remove('hide');
-                    link.href = downloadURL;
-                    link.download = `picture-box-${width}x${height}.jpg`;
-                    document.getElementById('render-status').textContent = 'Rendered ' + boxes.length + ' boxes · ' + width + '×' + (height * boxes.length) + ' · ' + Math.max(1, Math.round(blob.size / 1024)) + ' KB';
-                }, 'image/jpeg', values.quality);
+                var blob;
+                try {
+                    blob = await exportJPEG(c, values.quality);
+                } catch (error) {
+                    if (current === revision) { hideOutput(); showMessage('Could not export that image.'); }
+                    return;
+                }
+                if (current !== revision) return;
+                if (!blob) { hideOutput(); showMessage('Could not export that image.'); return; }
+                if (downloadURL) URL.revokeObjectURL(downloadURL);
+                downloadURL = URL.createObjectURL(blob);
+                var imgnode = document.getElementById('result');
+                imgnode.classList.remove('hide');
+                document.getElementById('result-panel').classList.remove('hide');
+                imgnode.src = downloadURL;
+                imgnode.width = width;
+                imgnode.height = height * boxes.length;
+                var link = document.getElementById("download-link");
+                link.classList.remove('hide');
+                link.href = downloadURL;
+                link.download = `picture-box-${width}x${height}.jpg`;
+                document.getElementById('render-status').textContent = 'Rendered ' + boxes.length + ' boxes · ' + width + '×' + (height * boxes.length) + ' · ' + Math.max(1, Math.round(blob.size / 1024)) + ' KB';
             }
         })();
 

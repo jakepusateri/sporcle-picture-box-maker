@@ -86,8 +86,21 @@ preview grid adapt to narrow screens; oversized viewports remain accessible by
 horizontal scrolling rather than changing the output or crop dimensions.
 The action bar reports the rendered slot count, dimensions, and JPEG size.
 Mobile regression tests at 390×844 cover both two and three requested preview
-columns, before upload, after rendering, and after resizing. They require no
-page-level or grid-level horizontal overflow with 150px boxes.
+columns with non-overlay vertical scrollbars, before upload, after rendering a
+generated 4000×3000 JPEG, after scrolling to `(94, 650)`, and after resizing. They
+require no page-level or grid-level horizontal overflow with 150px boxes. A
+separate deliberately overflowing grid checks that absolutely positioned upload
+inputs remain contained by their cards rather than extending the document.
+
+Render waits for the bulk-upload queue as well as individual image loads. JPEG
+export transfers a 1:1 snapshot of the finished canvas to an inline worker, which
+uses `OffscreenCanvas.convertToBlob`, avoiding main-thread idle-encoder
+scheduling. The worker is terminated and its script URL revoked after export.
+Browsers without workers or `OffscreenCanvas` retain the `toBlob` fallback.
+Tests cover stalled HTML canvas
+encoding, rejected exports and recovery, the fallback, and Render clicked while
+page-drop decoding is deliberately paused. Crop math and golden tolerances are
+unchanged.
 
 Additional browser tests cover:
 

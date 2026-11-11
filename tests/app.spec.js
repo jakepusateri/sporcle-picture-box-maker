@@ -327,6 +327,55 @@ test('Page drop raises Count to fit and preserves file order', async ({ page }) 
   await render(page); await slots(page, colors);
 });
 
+test('Render waits for the entire page-drop queue', async ({ page }) => {
+  await create(page, 1); await upload(page, 0);
+  await page.evaluate(() => {
+    const decode = HTMLImageElement.prototype.decode;
+    let release;
+    const gate = new Promise(resolve => { release = resolve; });
+    HTMLImageElement.prototype.decode = async function () { await gate; return decode.call(this); };
+    window.releaseUploads = release;
+  });
+  await dropFiles(page, 'body', [fixture(1), fixture(2), fixture(3)]);
+  await page.locator('#final-render').click();
+  await expect(page.locator('#result')).toBeHidden();
+  await page.evaluate(() => window.releaseUploads());
+  await expect(page.locator('#result')).toBeVisible();
+  await page.locator('#result').evaluate(img => img.decode());
+  await slots(page, colors);
+});
+
+test('JPEG export does not depend on HTML canvas idle encoding', async ({ page }) => {
+  await create(page, 1); await upload(page, 0);
+  await page.evaluate(() => {
+    window.idleEncoderCalled = false;
+    HTMLCanvasElement.prototype.toBlob = function () { window.idleEncoderCalled = true; };
+  });
+  await render(page); await slots(page, [colors[0]]);
+  expect(await page.evaluate(() => window.idleEncoderCalled)).toBe(false);
+});
+
+test('JPEG export failures show an error and allow retry', async ({ page }) => {
+  await create(page, 1); await upload(page, 0);
+  await page.evaluate(() => {
+    window.OriginalWorker = Worker;
+    window.failedWorkerURL = URL.createObjectURL(new Blob(['onmessage = () => postMessage({ error: "Export failed" });'], { type: 'text/javascript' }));
+    window.Worker = function () { return new window.OriginalWorker(window.failedWorkerURL); };
+  });
+  await page.locator('#final-render').click();
+  await expect(page.locator('#message')).toContainText('Could not export that image');
+  await expect(page.locator('#result')).toBeHidden();
+  await expect(page.locator('#download-link')).toBeHidden();
+  await page.evaluate(() => { window.Worker = window.OriginalWorker; URL.revokeObjectURL(window.failedWorkerURL); });
+  await render(page); await slots(page, [colors[0]]);
+});
+
+test('JPEG export falls back when OffscreenCanvas is unavailable', async ({ page }) => {
+  await create(page, 1); await upload(page, 0);
+  await page.evaluate(() => { window.OffscreenCanvas = undefined; });
+  await render(page); await slots(page, [colors[0]]);
+});
+
 test('Clear empties one slot while retaining its neighbors', async ({ page }) => {
   await create(page, 3); for (let i = 0; i < 3; i++) await upload(page, i);
   await page.getByRole('button', { name: 'Clear box 2', exact: true }).click();
@@ -351,23 +400,62 @@ test('Bulk fill respects the 100-box limit', async ({ page }) => {
   await expect(page.locator('.container')).toHaveCount(100);
 });
 
+test.describe('Mobile with a non-overlay vertical scrollbar', () => {
+test.use({ context: async ({ playwright, baseURL }, use) => {
+  const browser = await playwright.chromium.launch({ ignoreDefaultArgs: ['--hide-scrollbars'] });
+  try { await use(await browser.newContext({ baseURL })); }
+  finally { await browser.close(); }
+} });
 for (const columns of [2, 3]) test(`Mobile preview with ${columns} columns has no page overflow`, async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.locator('#columns').fill(String(columns));
   await create(page);
   const checkLayout = async () => {
-    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
+    const layout = await page.evaluate(() => ({
+      width: document.documentElement.clientWidth,
+      root: document.documentElement.scrollWidth,
+      body: document.body.scrollWidth,
+      x: scrollX,
+      overflowing: [...document.querySelectorAll('body *')].filter(el => el.getBoundingClientRect().right > innerWidth).map(el => ({ tag: el.tagName, id: el.id, class: el.className, right: el.getBoundingClientRect().right })),
+    }));
+    expect(layout.root, JSON.stringify(layout)).toBeLessThanOrEqual(layout.width);
+    expect(layout.body).toBeLessThanOrEqual(layout.width);
+    expect(layout.x).toBe(0);
+    expect(layout.overflowing).toEqual([]);
     expect(await page.locator('.grid-scroll').evaluate(el => el.scrollWidth)).toBeLessThanOrEqual(await page.locator('.grid-scroll').evaluate(el => el.clientWidth));
     const positions = await page.locator('.container').evaluateAll(elements => elements.map(el => el.getBoundingClientRect().x));
-    expect(new Set(positions).size).toBe(2);
+    expect(new Set(positions).size).toBe(layout.width < 390 ? 1 : 2);
   };
   await checkLayout();
-  for (let i = 0; i < 4; i++) await upload(page, i);
+  const jpeg = await page.evaluate(() => {
+    const canvas = document.createElement('canvas'); canvas.width = 4000; canvas.height = 3000;
+    const ctx = canvas.getContext('2d'); ctx.fillStyle = 'red'; ctx.fillRect(0, 0, 4000, 3000);
+    return canvas.toDataURL('image/jpeg', 0.9).split(',')[1];
+  });
+  await upload(page, 0, { name: 'large-4000x3000.jpg', mimeType: 'image/jpeg', buffer: Buffer.from(jpeg, 'base64') });
+  for (let i = 1; i < 4; i++) await upload(page, i);
   await render(page);
+  await page.evaluate(() => window.scrollTo(94, 650));
+  expect(await page.evaluate(() => scrollY)).toBe(650);
   await checkLayout();
   await slots(page, colors);
   await page.setViewportSize({ width: 1280, height: 844 });
   await page.setViewportSize({ width: 390, height: 844 });
-  await expect.poll(() => page.locator('.grid-wrapper').evaluate(el => getComputedStyle(el).gridTemplateColumns.split(' ').length)).toBe(2);
+  await expect.poll(() => page.locator('.grid-wrapper').evaluate(el => getComputedStyle(el).gridTemplateColumns.split(' ').length)).toBe(await page.evaluate(() => document.documentElement.clientWidth < 390 ? 1 : 2));
   await checkLayout();
+});
+
+test('Off-screen upload inputs remain contained by the grid scroller', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await create(page, 4, 200, 150);
+  await page.addStyleTag({ content: '.grid-scroll .grid-wrapper { grid-template-columns: repeat(3, minmax(218px, 1fr)) !important; }' });
+  for (let i = 0; i < 4; i++) await upload(page, i);
+  await render(page);
+  expect(await page.locator('.grid-scroll').evaluate(el => el.scrollWidth > el.clientWidth)).toBe(true);
+  expect(await page.locator('#upload-2').evaluate(el => el.offsetParent.className)).toContain('container');
+  await page.evaluate(() => window.scrollTo(94, 650));
+  expect(await page.evaluate(() => scrollX)).toBe(0);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(await page.evaluate(() => document.documentElement.clientWidth));
+  await slots(page, colors, 200, 150);
+});
 });
