@@ -2,13 +2,13 @@ const { test: base, expect } = require('@playwright/test');
 const { PNG } = require('pngjs');
 const fs = require('node:fs');
 const path = require('node:path');
+const { zonePlateFixture, analyzeZonePlate, maxStddev } = require('./antialias');
 
 const colors = [[255, 0, 0], [0, 255, 0], [0, 0, 255], [255, 255, 0]];
 function fixture(kind = 'quadrants', width = 400, height = 300) {
   const png = new PNG({ width, height });
   for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) {
     let color = typeof kind === 'number' ? colors[kind] : colors[(x >= width / 2 ? 1 : 0) + (y >= height / 2 ? 2 : 0)];
-    if (kind === 'frequency') color = Array(3).fill(x % 2 * 255);
     if (kind === 'detail') color = Array(3).fill(Math.round(128 + 55 * Math.sin(x / 6) + 35 * Math.sin(y / 9) + 20 * Math.sin((x + y) / 21)));
     const offset = (y * width + x) * 4;
     png.data.set([...color, 255], offset);
@@ -266,19 +266,21 @@ test('B5 canvas must not contain scripts', async ({ page }) => {
   await expect(page.locator('#outcanvas script')).toHaveCount(0);
 });
 
-test('@antialias high-frequency crop has no moire', async ({ page, browserName }) => {
-  await create(page, 1); await upload(page, 0, fixture('frequency', 3071, 3067));
+test('@antialias zone plate rejects above-Nyquist moire', async ({ page, browserName }) => {
+  await create(page, 1); await upload(page, 0, zonePlateFixture());
+  const crop = await page.evaluate(() => {
+    const { points, zoom } = window.testCroppies[0].get();
+    return { x: Math.floor(points[0] * zoom) / zoom, y: Math.floor(points[1] * zoom) / zoom, zoom };
+  });
   await render(page);
   const result = await pixels(page);
-  const gray = Array.from({ length: result.width * result.height }, (_, i) => result.data[i * 4]);
-  const mean = gray.reduce((sum, value) => sum + value, 0) / gray.length;
-  const stddev = Math.sqrt(gray.reduce((sum, value) => sum + (value - mean) ** 2, 0) / gray.length);
-  const rowMeans = Array.from({ length: result.height }, (_, y) => gray.slice(y * result.width, (y + 1) * result.width).reduce((sum, value) => sum + value, 0) / result.width);
-  console.log(`Anti-alias ${browserName}: mean=${mean.toFixed(4)} std-dev=${stddev.toFixed(4)} range=${Math.max(...gray) - Math.min(...gray)}`);
+  expect([result.width, result.height]).toEqual([150, 150]);
+  const { mean, stddev, minNyquistRatio, samples } = analyzeZonePlate(result, crop);
+  console.log(`Anti-alias ${browserName}: mean=${mean.toFixed(4)} std-dev=${stddev.toFixed(4)} min-Nyquist-ratio=${minNyquistRatio.toFixed(4)} samples=${samples}`);
+  expect(samples).toBeGreaterThan(9000);
+  expect(minNyquistRatio).toBeGreaterThan(2);
   expect(Math.abs(mean - 127.5)).toBeLessThan(2);
-  expect(stddev).toBeLessThan(1.5);
-  expect(Math.max(...gray) - Math.min(...gray)).toBeLessThanOrEqual(6);
-  expect(Math.max(...rowMeans) - Math.min(...rowMeans)).toBeLessThan(2);
+  expect(stddev).toBeLessThan(maxStddev);
   await expect(page.locator('#render-status')).not.toContainText('fallback');
 });
 

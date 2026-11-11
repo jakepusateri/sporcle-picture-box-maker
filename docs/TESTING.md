@@ -30,10 +30,39 @@ and appends a small status notice. This is a compatibility fallback, **not** a
 promise of equal quality in Firefox/WebKit. A later successful render clears
 the notice. JPEG export keeps its existing worker/fallback behavior.
 
-The `@antialias` test runs in all three browser projects: 3071×3067 one-pixel
-vertical stripes shrink to 150×150. Assertions require mean within 2 of 127.5,
-std-dev below 1.5, full range at most 6, and row-mean range below 2; this guards
-against biased averaging and spatial moiré, not just a plausible center pixel.
+The `@antialias` test runs in all three browser projects: a generated 3071×3067
+zone plate shrinks to 150×150. Its grayscale formula is
+`round(127.5 + 127.5*sin(pi*(dx²+dy²)/4096))`, centered on the source image.
+Analysis uses only the annulus 20–60 output pixels from center (10,040 samples),
+away from legitimate low-frequency central detail and the crop edges.
+The local source frequencies are `(dx/4096, dy/4096)` cycles/source pixel.
+Using the actual fit crop/zoom, the test verifies that every annulus pixel's
+largest frequency component exceeds twice the output Nyquist (`zoom/2`);
+the measured minimum ratio is 2.6672. The source components themselves remain
+below the input Nyquist, so this is resampling aliasing, not source aliasing.
+The unchanged limits require mean within 2 of 127.5 and **std-dev below 1.5**
+in this region. The fixture and metric are shared in `tests/antialias.js`.
+
+The same fixture, crop mapping, JPEG quality 1.0, ROI and metric discriminate:
+
+| Pipeline | Engine | Annulus std-dev | Result at <1.5 |
+| --- | --- | ---: | --- |
+| Old Hermite + 4× pre-shrink (`e6e8499`) | Chromium | 4.9904 | Fail |
+| Native B, smoothing high where supported | Chromium | 3.2505 | Fail |
+| Native B | Firefox | 77.4531 | Fail |
+| Native B, smoothing high | Linux WebKit | 87.4828 | Fail |
+| Current pica | Chromium | 0.0885 | Pass |
+| Current pica | Firefox | 0.0885 | Pass |
+| Current pica | Linux WebKit | 0.2255 | Pass |
+
+The historical run executes a saved app whose SHA-256 was checked against
+`git show e6e8499:index.html`, not a reimplementation of Hermite. Native controls
+draw the same original-resolution image/crop directly to the final canvas;
+current pica runs through the actual Render button in every engine. Measurements
+use final decoded JPEG output, not unencoded intermediates. Even the highest
+pica std-dev is over six times below the unchanged limit, while the old pipeline
+is over three times above it. The replaced one-pixel-stripe fixture had old
+std-dev 0 and did not discriminate; it is no longer the regression test.
 The generated detail fixture separately checks that Sharpen increases edge
 energy by over 5%, changes output pixels, and does not move the crop.
 Fallback tests cover a blocked CDN and thrown resize errors/recovery. Only the
@@ -43,13 +72,8 @@ the JPEG worker protocol, leaving the newly introduced pica workers functional.
 
 Before regenerating the intentional pica goldens, new-vs-historical-golden RGB
 MAE was **0.6887111111 (off)** / **0.7237777778 (on)**. Off's independent-reference
-MAE was **0.9747851852**. The unchanged `e6e8499` app was also rendered from a
-saved copy using the exact same generated 3071×3067 stripe fixture: old std-dev
-was **0.0000** (mean 127). It passes this synthetic case; the test does not prove
-the old pipeline fails on every high-frequency input. The new pica results were
-**0.3107** std-dev in Chromium/Firefox and **0.5122** in Linux WebKit, all within
-the stated limits. The natural-photo SSIM study above provides the separate
-evidence for the resizer's quality improvement.
+MAE was **0.9747851852**. Those intentional goldens are unchanged by the later
+zone-plate regression improvement.
 
 ## Running the suite
 
@@ -68,7 +92,7 @@ CDN-loaded with SRI. On Linux, install browser host libraries with
 The lockfile pins the test dependencies. Tests run serially to avoid contaminating
 performance measurements. Runtime PNG fixtures are generated with pngjs: four
 solid colors, 400x300 quadrants, a 64x64 image, 4000x3000 quadrants,
-3071x3067 one-pixel black/white vertical stripes, and smooth detailed patterns.
+3071x3067 sinusoidal zone plates, and smooth detailed patterns.
 
 To intentionally replace the crop baseline after reviewing a rendering change:
 
