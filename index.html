@@ -23,6 +23,8 @@
         p { margin: 6px 0; }
         .eyebrow { color: var(--accent); font-size: 12px; font-weight: 750; letter-spacing: .12em; text-transform: uppercase; }
         .hint, header p, #render-status { color: var(--muted); }
+        .box-message { color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
+        .box-message:empty { display: none; }
         .settings, .container, .result-panel { background: var(--card); border: 1px solid var(--line); border-radius: 16px; box-shadow: var(--shadow); }
         .settings { padding: 22px; margin-bottom: 28px; }
         .fields { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 16px; margin: 18px 0; }
@@ -76,6 +78,7 @@
         <header><span class="eyebrow">Sporcle tools</span><h1>Picture Box Maker</h1><p>Crop images into equal boxes and stitch them into one Sporcle picture-box image</p></header>
         <section class="settings" aria-labelledby="settings-title">
             <h2 id="settings-title">Make it yours</h2>
+            <p class="hint">Large photos use a working copy up to 2048 px long. Zoom is limited to useful source detail.</p>
             <form id="dimensions-form">
                 <div class="fields">
                     <div><label for="width">Width</label><div class="field-input"><input id="width" value="150" type="number" min="1" max="2000" required><span>px</span></div></div>
@@ -103,20 +106,142 @@
             document.getElementById('message').textContent = message;
         }
 
-        function readFile(input, cb) {
-            if (!input.files || !window.FileReader) {
-                showMessage('Your browser does not support file uploads.');
-                return;
+        var workingSide = 2048;
+        var maxCanvasPixels = 16777216;
+        var uploadQueue = Promise.resolve();
+        var bitmapResizeSupport;
+
+        function isImageFile(file) {
+            return file && (file.type.startsWith('image/') || /\.(jpe?g|png|webp|avif|heic|heif)$/i.test(file.name));
+        }
+
+        async function sourceDimensions(file) {
+            var data = new DataView(await file.slice(0, 262144).arrayBuffer());
+            if (data.byteLength >= 24 && data.getUint32(0) === 0x89504e47 && data.getUint32(4) === 0x0d0a1a0a) {
+                return { width: data.getUint32(16), height: data.getUint32(20) };
             }
-            if (!input.files.length) return;
-            var reader = new FileReader();
-            reader.onload = function () { cb(reader.result); };
-            reader.onerror = function () { showMessage('Could not read that image.'); };
-            reader.readAsDataURL(input.files[0]);
+            if (data.byteLength < 4 || data.getUint16(0) !== 0xffd8) return null;
+            var width, height, orientation = 1;
+            for (var offset = 2; offset + 4 <= data.byteLength;) {
+                if (data.getUint8(offset) !== 0xff) return null;
+                var marker = data.getUint8(offset + 1);
+                if (marker === 0xda || marker === 0xd9) break;
+                var length = data.getUint16(offset + 2);
+                var end = offset + 2 + length;
+                if (length < 2 || end > data.byteLength) return null;
+                var start = offset + 4;
+                if (marker >= 0xc0 && marker <= 0xcf && ![0xc4, 0xc8, 0xcc].includes(marker) && start + 5 <= end) {
+                    height = data.getUint16(start + 1);
+                    width = data.getUint16(start + 3);
+                }
+                if (marker === 0xe1 && start + 14 <= end && data.getUint32(start) === 0x45786966 && data.getUint16(start + 4) === 0) {
+                    var tiff = start + 6;
+                    var little = data.getUint16(tiff) === 0x4949;
+                    var directory = tiff + data.getUint32(tiff + 4, little);
+                    if (directory >= tiff && directory + 2 <= end) {
+                        var entries = data.getUint16(directory, little);
+                        for (var entry = directory + 2; entry + 12 <= end && entries-- > 0; entry += 12) {
+                            if (data.getUint16(entry, little) === 0x0112 && data.getUint16(entry + 2, little) === 3 && data.getUint32(entry + 4, little) === 1) {
+                                orientation = data.getUint16(entry + 8, little);
+                            }
+                        }
+                    }
+                }
+                offset = end;
+            }
+            if (!width || !height) return null;
+            return orientation >= 5 && orientation <= 8 ? { width: height, height: width } : { width: width, height: height };
+        }
+
+        function canResizeBitmap() {
+            if (typeof createImageBitmap !== 'function') return Promise.resolve(false);
+            if (!bitmapResizeSupport) bitmapResizeSupport = (async function () {
+                var canvas = document.createElement('canvas'), bitmap;
+                try {
+                    canvas.width = 2;
+                    canvas.height = 2;
+                    var blob = await new Promise(function (resolve) { canvas.toBlob(resolve, 'image/png'); });
+                    bitmap = await createImageBitmap(blob, { resizeWidth: 1, resizeHeight: 1, resizeQuality: 'high' });
+                    return bitmap.width === 1 && bitmap.height === 1;
+                } catch (error) { return false; }
+                finally {
+                    if (bitmap) bitmap.close();
+                    canvas.width = canvas.height = 0;
+                }
+            })();
+            return bitmapResizeSupport;
+        }
+
+        async function workingURL(file, current) {
+            var dimensions = await sourceDimensions(file);
+            if (!dimensions) {
+                var metadataURL = URL.createObjectURL(file);
+                var metadataImage = new Image();
+                try {
+                    dimensions = await new Promise(function (resolve, reject) {
+                        metadataImage.onload = function () { resolve({ width: metadataImage.naturalWidth, height: metadataImage.naturalHeight }); };
+                        metadataImage.onerror = function () { reject(new Error('This image format is unsupported or the file is damaged.')); };
+                        metadataImage.src = metadataURL;
+                    });
+                } finally {
+                    metadataImage.onload = metadataImage.onerror = null;
+                    metadataImage.removeAttribute('src');
+                    URL.revokeObjectURL(metadataURL);
+                }
+            }
+            if (!current()) throw new Error('Upload cancelled');
+            if (dimensions && Math.max(dimensions.width, dimensions.height) <= workingSide) return URL.createObjectURL(file);
+            var image, bitmap, sourceURL, canvas;
+            try {
+                var ratio, width, height;
+                if (dimensions && await canResizeBitmap()) {
+                    if (!current()) throw new Error('Upload cancelled');
+                    ratio = Math.min(1, workingSide / Math.max(dimensions.width, dimensions.height));
+                    width = Math.max(1, Math.round(dimensions.width * ratio));
+                    height = Math.max(1, Math.round(dimensions.height * ratio));
+                    try {
+                        bitmap = await createImageBitmap(file, { imageOrientation: 'from-image', resizeWidth: width, resizeHeight: height, resizeQuality: 'high' });
+                        if (bitmap.width !== width || bitmap.height !== height) { bitmap.close(); bitmap = null; }
+                    } catch (error) { bitmap = null; }
+                }
+                if (!bitmap) {
+                    if (dimensions && dimensions.width * dimensions.height > maxCanvasPixels) {
+                        throw new Error('This browser cannot safely resize this large image. Try a smaller JPEG or update your browser.');
+                    }
+                    sourceURL = URL.createObjectURL(file);
+                    image = new Image();
+                    image.src = sourceURL;
+                    await image.decode();
+                    ratio = Math.min(1, workingSide / Math.max(image.naturalWidth, image.naturalHeight));
+                    width = Math.max(1, Math.round(image.naturalWidth * ratio));
+                    height = Math.max(1, Math.round(image.naturalHeight * ratio));
+                    if (ratio === 1) {
+                        var originalURL = sourceURL;
+                        sourceURL = null;
+                        return originalURL;
+                    }
+                }
+                if (!current()) throw new Error('Upload cancelled');
+                canvas = document.createElement('canvas');
+                canvas.width = width;
+                canvas.height = height;
+                var context = canvas.getContext('2d');
+                context.imageSmoothingEnabled = true;
+                context.imageSmoothingQuality = 'high';
+                context.drawImage(bitmap || image, 0, 0, width, height);
+                var blob = await new Promise(function (resolve) { canvas.toBlob(resolve, 'image/png'); });
+                if (!blob) throw new Error('Could not prepare image');
+                return URL.createObjectURL(blob);
+            } finally {
+                if (bitmap) bitmap.close();
+                if (image) image.removeAttribute('src');
+                if (sourceURL) URL.revokeObjectURL(sourceURL);
+                if (canvas) canvas.width = canvas.height = 0;
+            }
         }
 
         async function exportJPEG(canvas, quality) {
-            if (typeof OffscreenCanvas !== 'function' || typeof Worker !== 'function') {
+            if (typeof OffscreenCanvas !== 'function' || typeof Worker !== 'function' || typeof createImageBitmap !== 'function') {
                 return new Promise(function (resolve) { canvas.toBlob(resolve, 'image/jpeg', quality); });
             }
             var image = await createImageBitmap(canvas);
@@ -124,15 +249,18 @@
             try {
                 workerURL = URL.createObjectURL(new Blob([`
                     self.onmessage = async function (event) {
+                        var image = event.data.image, canvas;
                         try {
-                            var image = event.data.image;
-                            var canvas = new OffscreenCanvas(image.width, image.height);
+                            canvas = new OffscreenCanvas(image.width, image.height);
                             canvas.getContext('2d').drawImage(image, 0, 0);
                             image.close();
                             var blob = await canvas.convertToBlob({ type: 'image/jpeg', quality: event.data.quality });
                             self.postMessage({ blob: blob });
                         } catch (error) {
                             self.postMessage({ error: error.message });
+                        } finally {
+                            image.close();
+                            if (canvas) canvas.width = canvas.height = 0;
                         }
                     };
                 `], { type: 'text/javascript' }));
@@ -152,36 +280,66 @@
             }
         }
 
-        async function bindImage(box, url) {
-            var version = box.version;
+        function releasePhoto(box, keepURL) {
+            if (box.url && !keepURL) URL.revokeObjectURL(box.url);
+            box.url = null;
+            if (box.image) box.image.removeAttribute('src');
+            box.image = null;
+            box.container.querySelectorAll('img').forEach(function (image) { image.removeAttribute('src'); });
+            box.container.querySelectorAll('canvas').forEach(function (canvas) { canvas.width = canvas.height = 0; });
+            box.container.classList.remove('is-loaded');
+        }
+
+        function releaseBox(box, keepURL) {
+            box.version++;
+            releasePhoto(box, keepURL);
+            box.croppie.destroy();
+            box.container.remove();
+        }
+
+        async function bindImage(box, url, version) {
+            if (!box.container.isConnected || version !== box.version) return false;
             var image = new Image();
-            image.src = url;
-            await image.decode();
-            if (!box.container.isConnected || version !== box.version) return;
-            var bitmap = await createImageBitmap(image);
-            if (!box.container.isConnected || version !== box.version) { bitmap.close(); return; }
-            await box.croppie.bind({ url: url });
-            if (!box.container.isConnected || version !== box.version) { bitmap.close(); return; }
-            if (box.bitmap) box.bitmap.close();
-            box.bitmap = bitmap;
-            box.image = image;
-            box.url = url;
-            box.container.classList.add('is-loaded');
+            var bound = false;
+            try {
+                image.src = url;
+                await image.decode();
+                if (!box.container.isConnected || version !== box.version) return false;
+                await box.croppie.bind({ url: url });
+                if (!box.container.isConnected || version !== box.version) return false;
+                box.image = image;
+                box.url = url;
+                box.container.classList.add('is-loaded');
+                box.container.querySelector('.box-message').textContent = '';
+                bound = true;
+                return true;
+            } finally { if (!bound) image.removeAttribute('src'); }
         }
 
         function loadFile(box, file) {
-            if (!file || !file.type.startsWith('image/')) { showMessage('Please choose an image file.'); return Promise.resolve(); }
+            if (!isImageFile(file)) { showMessage('Please choose an image file.'); return Promise.resolve(); }
             box.version++;
             var version = box.version;
-            box.pending = new Promise(function (resolve) {
-                var reader = new FileReader();
-                reader.onload = function () {
-                    if (version !== box.version || !box.container.isConnected) { resolve(); return; }
-                    bindImage(box, reader.result).catch(function () { showMessage('Could not load that image.'); }).finally(resolve);
-                };
-                reader.onerror = function () { showMessage('Could not read that image.'); resolve(); };
-                reader.readAsDataURL(file);
+            releasePhoto(box);
+            box.container.querySelector('.box-message').textContent = 'Loading…';
+            box.pending = uploadQueue.then(async function () {
+                var url;
+                try {
+                    if (version !== box.version || !box.container.isConnected) return;
+                    url = await workingURL(file, function () { return version === box.version && box.container.isConnected; });
+                    if (version !== box.version || !box.container.isConnected) return;
+                    await bindImage(box, url, version);
+                } catch (error) {
+                    if (version === box.version && box.container.isConnected) {
+                        releasePhoto(box);
+                        box.container.querySelector('.box-message').textContent = 'Could not load ' + file.name + '. ' + (error.message || 'The image is unsupported or damaged.');
+                        showMessage('Could not load that image. Try JPEG, PNG or another supported image format.');
+                    }
+                } finally {
+                    if (url && url !== box.url) URL.revokeObjectURL(url);
+                }
             });
+            uploadQueue = box.pending;
             return box.pending;
         }
 
@@ -196,6 +354,7 @@
             <div id="upload-demo-${n}" style="${style}"></div>
         </div><label class="dropzone" for="upload-${n}"><strong aria-hidden="true">+</strong>Drop image or click to choose<span class="visually-hidden"> for box ${n + 1}</span></label></div>
         <input type="file" class="visually-hidden" id="upload-${n}" aria-label="Image for box ${n + 1}" accept="image/*">
+        <p class="box-message" role="status" aria-live="polite"></p>
         `;
             document.querySelector('.grid-wrapper').appendChild(container);
 
@@ -205,10 +364,12 @@
                     height,
                     type: 'square'
                 },
+                maxZoom: 1,
             });
-            var box = { croppie: croppie, container: container, image: null, bitmap: null, url: null, pending: null, version: 0 };
+            var box = { croppie: croppie, container: container, image: null, url: null, pending: null, version: 0 };
             document.getElementById(`upload-${n}`).onchange = function () {
                 if (this.files && this.files[0]) { changed(); loadFile(box, this.files[0]); }
+                this.value = '';
             };
             container.querySelector('.replace').onclick = function () { document.getElementById(`upload-${n}`).click(); };
             container.querySelector('.clear').onclick = function () { clear(n); };
@@ -241,6 +402,9 @@
             function hideOutput() {
                 revision++;
                 document.getElementById('result').classList.add('hide');
+                document.getElementById('result').removeAttribute('src');
+                var canvas = document.getElementById('outcanvas');
+                canvas.width = canvas.height = 0;
                 document.getElementById('result-panel').classList.add('hide');
                 document.getElementById('render-status').textContent = 'Ready when you are. Render to update your image.';
                 var link = document.getElementById('download-link');
@@ -269,11 +433,10 @@
             function clearBox(n) {
                 hideOutput();
                 var old = boxes[n];
-                old.version++;
-                old.croppie.destroy();
-                if (old.bitmap) old.bitmap.close();
+                var nextTo = old.container.nextSibling;
+                releaseBox(old);
                 boxes[n] = createSingleImageBox(n, width, height, hideOutput, clearBox);
-                old.container.replaceWith(boxes[n].container);
+                document.querySelector('.grid-wrapper').insertBefore(boxes[n].container, nextTo);
             }
 
             function updateBoxes(values) {
@@ -285,21 +448,26 @@
                 gridWrapper.style.gridTemplateColumns = `repeat(${values.columns}, minmax(${width + 18}px, 1fr))`;
                 previewColumns = values.columns;
                 fitPreview();
+                var urls = boxes.map(function (box) { return box.url; });
                 for (var j = boxes.length - 1; j >= 0; j--) {
                     if (resize || j >= values.count) {
-                        boxes[j].croppie.destroy();
-                        boxes[j].container.remove();
-                        if (boxes[j].bitmap) boxes[j].bitmap.close();
+                        releaseBox(boxes[j], resize && j < values.count);
                     }
                 }
-                var previous = boxes;
                 boxes = resize ? [] : boxes.slice(0, values.count);
                 for (var i = 0; i < values.count; i++) {
                     if (!boxes[i]) {
                         var box = createSingleImageBox(i, width, height, hideOutput, clearBox);
                         boxes.push(box);
-                        if (previous[i] && previous[i].url) {
-                            box.pending = bindImage(box, previous[i].url).catch(function () { showMessage('Could not reload that image.'); });
+                        if (urls[i]) {
+                            box.url = urls[i];
+                            (function (target, url) {
+                                target.pending = uploadQueue.then(function () { return bindImage(target, url, 0); }).catch(function () {
+                                    releasePhoto(target);
+                                    target.container.querySelector('.box-message').textContent = 'Could not reload that image.';
+                                });
+                                uploadQueue = target.pending;
+                            })(box, urls[i]);
                         }
                     }
                 }
@@ -311,14 +479,18 @@
             };
 
             var bulkQueue = Promise.resolve();
+            var bulkRevision = 0;
             function addImages(files) {
-                var images = Array.from(files).filter(function (file) { return file.type.startsWith('image/'); });
+                var images = Array.from(files).filter(isImageFile);
+                var batch = bulkRevision;
                 bulkQueue = bulkQueue.then(async function () {
+                    if (batch !== bulkRevision) return;
                     if (!images.length) { showMessage('Please choose image files.'); return; }
                     var values = settings();
                     if (!values) return;
                     if (!boxes.length) updateBoxes(values);
                     await Promise.all(boxes.map(function (box) { return box.pending; }));
+                    if (batch !== bulkRevision) return;
                     var empty = boxes.filter(function (box) { return !box.url; }).length;
                     var needed = Math.min(100, boxes.length + Math.max(0, images.length - empty));
                     var raised = needed > boxes.length;
@@ -329,13 +501,15 @@
                     }
                     hideOutput();
                     var added = 0;
-                    for (var file of images) {
-                        var target = boxes.find(function (box) { return !box.url; });
-                        if (!target) break;
-                        await loadFile(target, file);
+                    var targets = boxes.filter(function (box) { return !box.url; });
+                    for (var index = 0; index < Math.min(images.length, targets.length); index++) {
+                        if (batch !== bulkRevision) return;
+                        var target = targets[index];
+                        await loadFile(target, images[index]);
                         if (target.url) added++;
                     }
-                    showMessage((raised ? 'Count increased to ' + needed + '. ' : '') + 'Added ' + added + ' image' + (added === 1 ? '' : 's') + '.' + (added < images.length ? ' Some images could not be added (maximum 100 boxes).' : ''));
+                    if (batch !== bulkRevision) return;
+                    showMessage((raised ? 'Count increased to ' + needed + '. ' : '') + 'Added ' + added + ' image' + (added === 1 ? '' : 's') + '.' + (images.length > targets.length ? ' Some images could not be added (maximum 100 boxes).' : added < images.length ? ' Some images could not be loaded; see box errors.' : ''));
                 }).catch(function () { showMessage('Could not add those images. Please try again.'); });
             }
             document.getElementById('add-images').onclick = function () { document.getElementById('bulk-upload').click(); };
@@ -343,7 +517,8 @@
             document.addEventListener('dragover', function (event) { event.preventDefault(); });
             document.addEventListener('drop', function (event) { event.preventDefault(); addImages(event.dataTransfer.files); });
             document.getElementById('reset-all').onclick = function reset() {
-                boxes.forEach(function (box) { box.croppie.destroy(); box.container.remove(); if (box.bitmap) box.bitmap.close(); });
+                bulkRevision++;
+                boxes.forEach(function (box) { releaseBox(box); });
                 boxes = [];
                 hideOutput();
                 showMessage('');
@@ -366,6 +541,11 @@
                     }
                     var values = settings();
                     if (!values) return;
+                    if (width * height * boxes.length > maxCanvasPixels || height * boxes.length > 16384) {
+                        hideOutput();
+                        showMessage('Output is too large. Reduce box size or count (maximum 16,777,216 pixels and 16,384 px tall).');
+                        return;
+                    }
                     var sharpen = document.getElementById('sharpen').checked;
                     current = ++revision;
                     await Promise.all(boxes.map(function (box) { return box.pending; }));
@@ -390,9 +570,9 @@
                         var patch = document.createElement('canvas');
                         var tile = document.createElement('canvas');
                         try {
-                            if (!resizer) resizer = pica({ features: ['js', 'wasm', 'ww'], concurrency: 4, idle: 60000 });
-                            patch.width = Math.max(1, Math.round(width / zoom));
-                            patch.height = Math.max(1, Math.round(height / zoom));
+                            if (!resizer) resizer = pica({ features: ['js', 'wasm', 'ww'], concurrency: 1, tile: 512, idle: 1000 });
+                            patch.width = Math.max(1, Math.min(workingSide, Math.round(width / zoom)));
+                            patch.height = Math.max(1, Math.min(workingSide, Math.round(height / zoom)));
                             var patchContext = patch.getContext('2d');
                             patchContext.imageSmoothingEnabled = true;
                             patchContext.imageSmoothingQuality = 'high';
@@ -432,6 +612,7 @@
                 } catch (error) {
                     if (current === revision) { hideOutput(); showMessage('Could not export that image.'); }
                 } finally {
+                    if (c) c.width = c.height = 0;
                     button.disabled = false;
                     button.textContent = 'Render';
                     button.removeAttribute('aria-busy');
