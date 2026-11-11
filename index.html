@@ -413,74 +413,86 @@
 
 <body>
     <style>
-        input {
-            max-width: 100px;
-        }
-
-        .controls-form {
-            padding-bottom: 1em
-        }
-
-        .hide {
-            display: none !important;
-        }
-
-        #dimensions-form {
-            display: inline;
-        }
-
-        #download-link {
-            display: block;
-        }
-
-        .grid-wrapper {
-            display: grid;
-            gap: 1em;
-            width: max-content;
-        }
-
-        .container {
-            flex: 1 1 50%;
-            display: inline-block;
-            margin-bottom: 2em;
-        }
-
-        .cr-viewport {
-            border: 1px black solid !important;
-        }
-
-        .controls {
-            display: block;
-            padding-top: 1em;
-            padding-bottom: 1em;
-        }
+        :root { color-scheme: light dark; --bg: #f5f6f8; --card: #fff; --ink: #202631; --muted: #596475; --line: #d9dfe7; --accent: #4355cf; --soft: #eef0ff; --shadow: 0 4px 20px #20263108; }
+        @media (prefers-color-scheme: dark) { :root { --bg: #13161d; --card: #1e232d; --ink: #edf0f7; --muted: #b0bacb; --line: #3d4657; --accent: #a0adff; --soft: #2b3150; --shadow: 0 4px 20px #0002; } }
+        * { box-sizing: border-box; }
+        body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.5 system-ui, sans-serif; }
+        main, .action-inner { max-width: 1120px; margin: auto; padding: 28px; }
+        header { margin: 12px 0 28px; }
+        h1 { font-size: clamp(26px, 4vw, 36px); letter-spacing: -.04em; margin: 4px 0; }
+        h2 { margin: 0; font-size: 18px; letter-spacing: -.02em; }
+        p { margin: 6px 0; }
+        .eyebrow { color: var(--accent); font-size: 12px; font-weight: 750; letter-spacing: .12em; text-transform: uppercase; }
+        .hint, header p, #render-status { color: var(--muted); }
+        .settings, .container, .result-panel { background: var(--card); border: 1px solid var(--line); border-radius: 16px; box-shadow: var(--shadow); }
+        .settings { padding: 22px; margin-bottom: 28px; }
+        .fields { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 16px; margin: 18px 0; }
+        label { display: block; font-size: 13px; font-weight: 650; }
+        .field-input { display: flex; align-items: center; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); margin-top: 6px; }
+        .field-input span { padding-right: 12px; color: var(--muted); font-size: 13px; }
+        input[type=number] { width: 100%; min-width: 0; border: 0; background: transparent; padding: 10px; color: var(--ink); font: inherit; }
+        button, .button { border: 1px solid var(--line); border-radius: 8px; padding: 10px 16px; background: var(--card); color: var(--ink); font: inherit; font-weight: 650; cursor: pointer; text-decoration: none; display: inline-flex; align-items: center; justify-content: center; }
+        button:hover, .button:hover { background: var(--soft); }
+        .primary { background: var(--accent); border-color: var(--accent); color: var(--card); }
+        .primary:hover { filter: brightness(.92); background: var(--accent); }
+        :focus-visible { outline: 3px solid var(--accent); outline-offset: 3px; }
+        .field-input:focus-within { outline: 2px solid var(--accent); }
+        .settings-actions, .section-heading, .box-heading, .action-inner, .action-buttons { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+        .settings-actions { border-top: 1px solid var(--line); padding-top: 18px; }
+        #message { color: var(--accent); font-weight: 600; margin-top: 12px; }
+        #message:empty { display: none; }
+        .section-heading { justify-content: space-between; margin: 0 0 14px; }
+        .grid-scroll { overflow-x: auto; padding: 3px 3px 12px; }
+        .grid-wrapper { display: grid; gap: 16px; }
+        .container { padding: 16px; min-width: 0; }
+        .box-heading { justify-content: space-between; margin-bottom: 16px; min-height: 30px; }
+        .badge { border-radius: 6px; background: var(--soft); color: var(--accent); font-weight: 750; padding: 3px 9px; }
+        .box-actions { display: flex; gap: 4px; visibility: hidden; }
+        .box-actions button { padding: 4px 8px; font-size: 12px; }
+        .is-loaded .box-actions { visibility: visible; }
+        .crop-stage { position: relative; width: max-content; margin: auto; }
+        .upload-demo-wrap { padding-bottom: 36px; }
+        .cr-viewport { border: 1px solid var(--line) !important; }
+        .croppie-container, .croppie-container * { box-sizing: content-box; }
+        .container:not(.is-loaded) .croppie-container { visibility: hidden; }
+        .dropzone { position: absolute; inset: 0 0 36px; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; padding: 12px; border: 2px dashed var(--line); border-radius: 10px; background: var(--bg); color: var(--muted); cursor: pointer; font-size: 13px; }
+        .dropzone strong { color: var(--accent); font-size: 26px; font-weight: 400; }
+        .is-loaded .dropzone { display: none; }
+        .drag-over { outline: 3px solid var(--accent); outline-offset: -3px; }
+        .visually-hidden { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }
+        .container:focus-within { outline: 2px solid var(--accent); outline-offset: 2px; }
+        .hide { display: none !important; }
+        .result-panel { margin-top: 24px; padding: 22px; }
+        .result-surface { margin-top: 16px; padding: 24px; overflow: auto; background: repeating-conic-gradient(var(--line) 0% 25%, var(--bg) 0% 50%) 0 / 20px 20px; border-radius: 10px; }
+        #result { display: block; max-width: none; margin: 0 auto; }
+        .controls { margin-top: 16px; background: var(--card); border: 1px solid var(--line); border-radius: 12px; box-shadow: var(--shadow); }
+        .action-inner { justify-content: space-between; padding-top: 16px; padding-bottom: 16px; }
+        #render-status { font-size: 13px; }
+        @media (max-width: 640px) { main, .action-inner { padding: 16px; } .settings, .result-panel { padding: 16px; } .fields { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; } .container { padding: 8px; } .grid-wrapper { gap: 10px; } .box-heading { gap: 4px; } .box-actions { flex-wrap: wrap; } .box-actions button { padding: 3px 4px; } .result-surface { padding: 12px; } .section-heading .hint { font-size: 12px; } }
     </style>
-    <div class="demo-wrap upload-demo">
-        <div class="controls-form">
+    <main>
+        <header><span class="eyebrow">Sporcle tools</span><h1>Picture Box Maker</h1><p>Crop images into equal boxes and stitch them into one Sporcle picture-box image</p></header>
+        <section class="settings" aria-labelledby="settings-title">
+            <h2 id="settings-title">Make it yours</h2>
             <form id="dimensions-form">
-                <label for="width">Width</label>
-                <input id="width" value="150" type="number" min="1" max="2000" required>
-                <label for="height">Height</label>
-                <input id="height" value="150" type="number" min="1" max="2000" required>
-                <label for="count">Count</label>
-                <input id="count" value="4" type="number" min="1" max="100" required>
-                <label for="columns">Preview columns</label>
-                <input id="columns" value="2" type="number" min="1" max="100" required>
-                <button>Create</button>
+                <div class="fields">
+                    <div><label for="width">Width</label><div class="field-input"><input id="width" value="150" type="number" min="1" max="2000" required><span>px</span></div></div>
+                    <div><label for="height">Height</label><div class="field-input"><input id="height" value="150" type="number" min="1" max="2000" required><span>px</span></div></div>
+                    <div><label for="count">Count</label><div class="field-input"><input id="count" value="4" type="number" min="1" max="100" required></div></div>
+                    <div><label for="columns">Preview columns</label><div class="field-input"><input id="columns" value="2" type="number" min="1" max="100" required></div></div>
+                    <div><label for="quality">Quality</label><div class="field-input"><input id="quality" value="1.0" type="number" step="0.01" min="0.1" max="1.0" required></div></div>
+                </div>
+                <div class="settings-actions"><button id="create-boxes" type="submit">Create / Update</button><button id="reset-all" type="button">Reset</button><button id="add-images" type="button">Add images…</button></div>
             </form>
-            <button id="reset-all">Reset</button>
-        </div>
-        <div class="grid-wrapper">
-        </div>
-    </div>
-    <p></p>
-    <p id="message" role="status" aria-live="polite"></p>
+            <input id="bulk-upload" class="visually-hidden" type="file" accept="image/*" multiple aria-label="Add multiple images">
+            <p id="message" role="status" aria-live="polite"></p>
+        </section>
+        <section aria-labelledby="boxes-title"><div class="section-heading"><h2 id="boxes-title">Your boxes</h2><span class="hint">Drop images here · output follows slot order</span></div><div class="grid-scroll"><div class="grid-wrapper"></div></div></section>
     <section class="controls">
-        <button id="final-render">Render</button>
-        <label for="quality">Quality</label><input id="quality" value="1.0" type="number" step="0.01" min="0.1" max="1.0" required>
+        <div class="action-inner"><div class="action-buttons"><button id="final-render" type="button" class="primary">Render</button><a id="download-link" class="button hide" href="#" download="export.jpg">Download</a></div><span id="render-status" role="status" aria-live="polite">Create boxes, then add your images.</span></div>
     </section>
-    <a id="download-link" class="hide" href="#" target="_blank" download="export.jpg">Download</a>
-    <img id="result" />
+        <section class="result-panel hide" id="result-panel" aria-labelledby="result-title"><h2 id="result-title">Your picture-box image</h2><p class="hint">Full-size preview · ready for Sporcle</p><div class="result-surface"><img id="result" alt="Rendered picture-box strip"></div></section>
+    </main>
     <canvas id="outcanvas" style="display: none"></canvas>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/croppie/2.6.5/croppie.min.js" integrity="sha384-PSdrudFH709o8Gc8xYqZ/1bIX4opybpFkf9IVVv1/JuniUUMus3xorl0m2NLhb4P" crossorigin="anonymous"></script>
     <script>
@@ -501,30 +513,49 @@
         }
 
         async function bindImage(box, url) {
+            var version = box.version;
             var image = new Image();
             image.src = url;
             await image.decode();
-            if (!box.container.isConnected) return;
+            if (!box.container.isConnected || version !== box.version) return;
             var bitmap = await createImageBitmap(image);
-            if (!box.container.isConnected) { bitmap.close(); return; }
+            if (!box.container.isConnected || version !== box.version) { bitmap.close(); return; }
             await box.croppie.bind({ url: url });
-            if (!box.container.isConnected) { bitmap.close(); return; }
+            if (!box.container.isConnected || version !== box.version) { bitmap.close(); return; }
             if (box.bitmap) box.bitmap.close();
             box.bitmap = bitmap;
             box.image = image;
             box.url = url;
+            box.container.classList.add('is-loaded');
         }
 
-        function createSingleImageBox(n, width, height) {
+        function loadFile(box, file) {
+            if (!file || !file.type.startsWith('image/')) { showMessage('Please choose an image file.'); return Promise.resolve(); }
+            box.version++;
+            var version = box.version;
+            box.pending = new Promise(function (resolve) {
+                var reader = new FileReader();
+                reader.onload = function () {
+                    if (version !== box.version || !box.container.isConnected) { resolve(); return; }
+                    bindImage(box, reader.result).catch(function () { showMessage('Could not load that image.'); }).finally(resolve);
+                };
+                reader.onerror = function () { showMessage('Could not read that image.'); resolve(); };
+                reader.readAsDataURL(file);
+            });
+            return box.pending;
+        }
+
+        function createSingleImageBox(n, width, height, changed, clear) {
             var container = document.createElement('div');
             container.classList.add('container');
             var style = `height: ${height + 2}px; width: ${width + 2}px`;
 
             container.innerHTML = `
-        <div class="upload-demo-wrap">
+        <div class="box-heading"><span class="badge">#${n + 1}</span><div class="box-actions"><button type="button" class="replace" aria-label="Replace image in box ${n + 1}">Replace</button><button type="button" class="clear" aria-label="Clear box ${n + 1}">Clear</button></div></div>
+        <div class="crop-stage"><div class="upload-demo-wrap">
             <div id="upload-demo-${n}" style="${style}"></div>
-        </div>
-        <input type="file" id="upload-${n}" value="Choose a file" accept="image/*" />
+        </div><label class="dropzone" for="upload-${n}"><strong aria-hidden="true">+</strong>Drop image or click to choose<span class="visually-hidden"> for box ${n + 1}</span></label></div>
+        <input type="file" class="visually-hidden" id="upload-${n}" aria-label="Image for box ${n + 1}" accept="image/*">
         `;
             document.querySelector('.grid-wrapper').appendChild(container);
 
@@ -535,11 +566,17 @@
                     type: 'square'
                 },
             });
-            var box = { croppie: croppie, container: container, image: null, bitmap: null, url: null, pending: null };
+            var box = { croppie: croppie, container: container, image: null, bitmap: null, url: null, pending: null, version: 0 };
             document.getElementById(`upload-${n}`).onchange = function () {
-                readFile(this, function (url) {
-                    box.pending = bindImage(box, url).catch(function () { showMessage('Could not load that image.'); });
-                });
+                if (this.files && this.files[0]) { changed(); loadFile(box, this.files[0]); }
+            };
+            container.querySelector('.replace').onclick = function () { document.getElementById(`upload-${n}`).click(); };
+            container.querySelector('.clear').onclick = function () { clear(n); };
+            container.ondragover = function (event) { event.preventDefault(); container.classList.add('drag-over'); };
+            container.ondragleave = function () { container.classList.remove('drag-over'); };
+            container.ondrop = function (event) {
+                event.preventDefault(); container.classList.remove('drag-over');
+                if (event.dataTransfer.files.length === 1) { event.stopPropagation(); changed(); loadFile(box, event.dataTransfer.files[0]); }
             };
             return box;
         }
@@ -555,6 +592,8 @@
             function hideOutput() {
                 revision++;
                 document.getElementById('result').classList.add('hide');
+                document.getElementById('result-panel').classList.add('hide');
+                document.getElementById('render-status').textContent = 'Ready when you are. Render to update your image.';
                 var link = document.getElementById('download-link');
                 link.classList.add('hide');
                 link.removeAttribute('href');
@@ -578,16 +617,23 @@
                 return values;
             }
 
-            form.onsubmit = async function (e) {
-                e.preventDefault();
-                var values = settings();
-                if (!values) return;
+            function clearBox(n) {
+                hideOutput();
+                var old = boxes[n];
+                old.version++;
+                old.croppie.destroy();
+                if (old.bitmap) old.bitmap.close();
+                boxes[n] = createSingleImageBox(n, width, height, hideOutput, clearBox);
+                old.container.replaceWith(boxes[n].container);
+            }
+
+            function updateBoxes(values) {
                 hideOutput();
                 var resize = width !== values.width || height !== values.height;
                 height = values.height;
                 width = values.width;
                 var gridWrapper = document.querySelector('.grid-wrapper');
-                gridWrapper.style.gridTemplateColumns = `repeat(${values.columns}, ${width + 2}px)`;
+                gridWrapper.style.gridTemplateColumns = `repeat(${values.columns}, minmax(${width + 18}px, 1fr))`;
                 for (var j = boxes.length - 1; j >= 0; j--) {
                     if (resize || j >= values.count) {
                         boxes[j].croppie.destroy();
@@ -599,14 +645,52 @@
                 boxes = resize ? [] : boxes.slice(0, values.count);
                 for (var i = 0; i < values.count; i++) {
                     if (!boxes[i]) {
-                        var box = createSingleImageBox(i, width, height);
+                        var box = createSingleImageBox(i, width, height, hideOutput, clearBox);
                         boxes.push(box);
                         if (previous[i] && previous[i].url) {
                             box.pending = bindImage(box, previous[i].url).catch(function () { showMessage('Could not reload that image.'); });
                         }
                     }
                 }
+            }
+            form.onsubmit = function (e) {
+                e.preventDefault();
+                var values = settings();
+                if (values) updateBoxes(values);
             };
+
+            var bulkQueue = Promise.resolve();
+            function addImages(files) {
+                var images = Array.from(files).filter(function (file) { return file.type.startsWith('image/'); });
+                bulkQueue = bulkQueue.then(async function () {
+                    if (!images.length) { showMessage('Please choose image files.'); return; }
+                    var values = settings();
+                    if (!values) return;
+                    if (!boxes.length) updateBoxes(values);
+                    await Promise.all(boxes.map(function (box) { return box.pending; }));
+                    var empty = boxes.filter(function (box) { return !box.url; }).length;
+                    var needed = Math.min(100, boxes.length + Math.max(0, images.length - empty));
+                    var raised = needed > boxes.length;
+                    if (raised) {
+                        values.count = needed;
+                        document.getElementById('count').value = needed;
+                        updateBoxes(values);
+                    }
+                    hideOutput();
+                    var added = 0;
+                    for (var file of images) {
+                        var target = boxes.find(function (box) { return !box.url; });
+                        if (!target) break;
+                        await loadFile(target, file);
+                        if (target.url) added++;
+                    }
+                    showMessage((raised ? 'Count increased to ' + needed + '. ' : '') + 'Added ' + added + ' image' + (added === 1 ? '' : 's') + '.' + (added < images.length ? ' Some images could not be added (maximum 100 boxes).' : ''));
+                }).catch(function () { showMessage('Could not add those images. Please try again.'); });
+            }
+            document.getElementById('add-images').onclick = function () { document.getElementById('bulk-upload').click(); };
+            document.getElementById('bulk-upload').onchange = function () { addImages(this.files); this.value = ''; };
+            document.addEventListener('dragover', function (event) { event.preventDefault(); });
+            document.addEventListener('drop', function (event) { event.preventDefault(); addImages(event.dataTransfer.files); });
             document.getElementById('reset-all').onclick = function reset() {
                 boxes.forEach(function (box) { box.croppie.destroy(); box.container.remove(); if (box.bitmap) box.bitmap.close(); });
                 boxes = [];
@@ -678,6 +762,7 @@
                     downloadURL = URL.createObjectURL(blob);
                     var imgnode = document.getElementById('result');
                     imgnode.classList.remove('hide');
+                    document.getElementById('result-panel').classList.remove('hide');
                     imgnode.src = downloadURL;
                     imgnode.width = width;
                     imgnode.height = height * boxes.length;
@@ -685,6 +770,7 @@
                     link.classList.remove('hide');
                     link.href = downloadURL;
                     link.download = `picture-box-${width}x${height}.jpg`;
+                    document.getElementById('render-status').textContent = 'Rendered ' + boxes.length + ' boxes · ' + width + '×' + (height * boxes.length) + ' · ' + Math.max(1, Math.round(blob.size / 1024)) + ' KB';
                 }, 'image/jpeg', values.quality);
             }
         })();
