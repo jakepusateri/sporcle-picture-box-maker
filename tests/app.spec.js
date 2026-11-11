@@ -112,7 +112,8 @@ test('F2 Create builds viewports and upload inputs', async ({ page }) => {
 });
 test('F3 upload binds even a 64x64 image', async ({ page }) => {
   await create(page, 1); await upload(page, 0, fixture(0, 64, 64));
-  await expect(page.locator('#upload-demo-0 .cr-image')).toHaveAttribute('src', /^data:image\/png/);
+  await expect(page.locator('#upload-demo-0 .cr-image')).toHaveAttribute('src', /^blob:/);
+  expect(await page.locator('#upload-demo-0 .cr-image').evaluate(image => [image.naturalWidth, image.naturalHeight])).toEqual([64, 64]);
 });
 test('F4 JPEG output and download', async ({ page }) => {
   await create(page); await upload(page, 0); const src = await render(page);
@@ -270,7 +271,8 @@ test('@antialias zone plate rejects above-Nyquist moire', async ({ page, browser
   await create(page, 1); await upload(page, 0, zonePlateFixture());
   const crop = await page.evaluate(() => {
     const { points, zoom } = window.testCroppies[0].get();
-    return { x: Math.floor(points[0] * zoom) / zoom, y: Math.floor(points[1] * zoom) / zoom, zoom };
+    const image = document.querySelector('.cr-image');
+    return { x: Math.floor(points[0] * zoom) / zoom, y: Math.floor(points[1] * zoom) / zoom, zoom, width: image.naturalWidth, height: image.naturalHeight };
   });
   await render(page);
   const result = await pixels(page);

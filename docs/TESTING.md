@@ -3,14 +3,17 @@
 The suite guards the single-file application's behavior. Selectors
 use existing ids and Croppie's structural elements, not presentation classes
 (except the grid's existing structural wrapper). Chromium runs the full suite;
-Firefox and WebKit run only the `@antialias` regression.
+Firefox runs the `@antialias` regression. WebKit also runs the `@phone` memory,
+orientation, error-handling and resource-lifecycle regressions.
 
 ## Resize quality
 
 The app uses pinned **pica 9.0.1**, Lanczos3, with amount 80 / radius 0.6 /
 threshold 2 unsharp enabled by default. Sharpen off disables only unsharp.
-The source-resolution crop and source origin are unchanged; full crops are
-passed to pica's JS/WASM worker pipeline, with native CIB resizing disabled.
+The crop math and source origin calculation are unchanged, now relative to a
+bounded working image. Crops are passed to pica's JS/WASM worker pipeline, with
+native CIB resizing disabled for this final resample. Upload preparation uses
+native high-quality bitmap resizing separately, before any Croppie binding.
 The bundled Hermite implementation and 4× pre-shrink are removed.
 
 In the five-crop linear-light ImageMagick study, mean SSIM was **0.9398 for E**
@@ -38,7 +41,9 @@ away from legitimate low-frequency central detail and the crop edges.
 The local source frequencies are `(dx/4096, dy/4096)` cycles/source pixel.
 Using the actual fit crop/zoom, the test verifies that every annulus pixel's
 largest frequency component exceeds twice the output Nyquist (`zoom/2`);
-the measured minimum ratio is 2.6672. The source components themselves remain
+the measured minimum ratio after working-copy preparation is 2.6914. The helper
+maps working-copy coordinates back to the original zone plate before calculating
+frequency. The source components themselves remain
 below the input Nyquist, so this is resampling aliasing, not source aliasing.
 The unchanged limits require mean within 2 of 127.5 and **std-dev below 1.5**
 in this region. The fixture and metric are shared in `tests/antialias.js`.
@@ -51,16 +56,16 @@ The same fixture, crop mapping, JPEG quality 1.0, ROI and metric discriminate:
 | Native B, smoothing high where supported | Chromium | 3.2505 | Fail |
 | Native B | Firefox | 77.4531 | Fail |
 | Native B, smoothing high | Linux WebKit | 87.4828 | Fail |
-| Current pica | Chromium | 0.0885 | Pass |
-| Current pica | Firefox | 0.0885 | Pass |
-| Current pica | Linux WebKit | 0.2255 | Pass |
+| Current bounded upload + pica | Chromium | 0.0519 | Pass |
+| Current bounded upload + pica | Firefox | 0.0000 | Pass |
+| Current bounded upload + pica | Linux WebKit | 0.3722 | Pass |
 
 The historical run executes a saved app whose SHA-256 was checked against
 `git show e6e8499:index.html`, not a reimplementation of Hermite. Native controls
 draw the same original-resolution image/crop directly to the final canvas;
 current pica runs through the actual Render button in every engine. Measurements
 use final decoded JPEG output, not unencoded intermediates. Even the highest
-pica std-dev is over six times below the unchanged limit, while the old pipeline
+pica std-dev is over four times below the unchanged limit, while the old pipeline
 is over three times above it. The replaced one-pixel-stripe fixture had old
 std-dev 0 and did not discriminate; it is no longer the regression test.
 The generated detail fixture separately checks that Sharpen increases edge
@@ -74,6 +79,112 @@ Before regenerating the intentional pica goldens, new-vs-historical-golden RGB
 MAE was **0.6887111111 (off)** / **0.7237777778 (on)**. Off's independent-reference
 MAE was **0.9747851852**. Those intentional goldens are unchanged by the later
 zone-plate regression improvement.
+
+## Phone memory and lifecycle
+
+All file loads share one sequential preparation queue, including individual
+inputs and box drops. Bulk import was already sequential; the original problem
+was retaining full-resolution sources, not parallelizing that bulk loop.
+Large inputs are reduced **once to a 2048px longest-side working copy** (at most
+4,194,304 pixels), then saved to a lossless PNG blob. Small inputs are unchanged.
+Only this working URL reaches Croppie and the app's retained Image. There is no
+retained per-box ImageBitmap, FileReader or base64 URL. Inputs are cleared after
+selection so their FileLists do not retain original files after processing.
+
+JPEG/PNG dimensions are read from at most 256KiB of headers before decoding;
+JPEG EXIF orientations 5–8 swap the target axes. Other formats use a temporary
+Image's load metadata (without forcing `decode()`); its URL/src are released
+before preparation. The preferred path is native `createImageBitmap(Blob)` with
+high-quality resize and `imageOrientation: 'from-image'`, followed by a bounded
+canvas and PNG encoding. A small capability probe checks that resize options
+are honored, avoiding a full-resolution bitmap on older implementations.
+The bitmap is closed and the canvas zeroed in `finally`. Native orientation is
+baked into the working PNG; small originals use the browser's EXIF handling.
+The decoder's own internal allocation is browser-controlled, not a JavaScript
+heap or canvas allocation; a resize request does not prove it never temporarily
+decodes the original. No more than one such preparation is active.
+
+If bitmap resizing is unavailable/fails, sources up to 16,777,216 pixels use one
+temporary decoded Image and high-quality drawImage into a bounded canvas.
+Larger sources fail with an actionable per-slot message instead of explicitly
+forcing an unsafe full-resolution decode. Unsupported/corrupt files retain
+their own error slots while subsequent files continue in order. Replace frees
+the previous photo before preparation, so a failed replacement leaves an error
+slot rather than retaining the old image. Reset invalidates queued bulk work.
+
+Zoom is capped at 1 working pixel per output pixel for adequately sized images;
+inherently small inputs can still enlarge to cover the viewport. This trades
+the old extreme full-resolution zoom for bounded phone memory. Cropping is
+otherwise unchanged. The final resize still uses pica Lanczos3/unsharp, now
+one worker with 512px tiles and a one-second idle lifetime instead of four
+long-lived workers. The new working-copy coordinate mapping is accounted for
+by the zone-plate frequency calculation; its threshold and F10 goldens are not
+regenerated or weakened.
+
+Every app canvas is bounded: source preparation/crop <=2048²; output is rejected
+**before allocation** above 16,777,216 pixels or 16,384px tall. Render's patch,
+tile, output and JPEG worker canvases are zeroed after use, including errors.
+The JPEG snapshot bitmap is closed and its dedicated worker/URL terminated and
+revoked. Clear/Replace/removal/Reset clear Image src values and revoke photo
+URLs. Viewport rebuilding transfers ownership of existing working URLs rather
+than leaking/revoking them prematurely. Hidden result src and URL are cleared.
+
+### Allocation audit: four 8064×6048 JPEGs
+
+One original RGBA raster is **186.05MiB**; four are **744.19MiB**.
+Before the fix, each box held the original data URL, app Image, full-sized
+ImageBitmap and Croppie Image. Counting one or two decoded Image surfaces plus
+the bitmap gives **1,488–2,233MiB** of logical retained raster storage for four
+photos. Browser cache/GPU sharing can reduce physical usage; this is an estimate,
+not a measured process-memory claim. Base64 adds 4/3 of encoded bytes as string
+characters (one or two bytes per character), in addition to native decoded data.
+At fit zoom the old crop scratch canvas was **35.71MP**, over iOS's area limit.
+Old Clear/Replace/Reset closed stored bitmaps but relied on GC for Images/data
+URLs; output canvas/preview allocations survived reset, and the strip was not
+area-checked.
+
+Afterward, each 4:3 working image is **2048×1536 = 12MiB**. Four app/Croppie
+images cost **48–96MiB** of logical decoded storage depending on cache sharing,
+plus content-dependent compressed working blobs (not base64 strings). An upload
+temporarily owns one 12MiB bitmap and a 12MiB canvas, not four originals. A
+browser may still allocate a transient original during native decode, but the
+app no longer retains it or duplicates it per box. For ordinary 150px boxes,
+the strip/encoding snapshot is only 150×600×4 = 0.343MiB each.
+
+Instrumented Chromium at 390×844, uploading four generated 48MP JPEGs and
+rendering, measured (JS heap sampled via CDP every 50ms):
+
+| Allocation | Before | After |
+| --- | ---: | ---: |
+| Peak main-page JS heap (CDP Performance) | 16,533,688 B | 15,785,576 B |
+| Peak live main-thread canvas estimate (RGBA×area) | 143,360,312 B | 12,582,912 B |
+| Largest individual canvas | 35,712,576 px | 3,145,728 px |
+| Peak explicitly tracked main-thread ImageBitmaps | 793,895,580 B | 12,582,912 B |
+| Retained large ImageBitmaps after render | 780,337,152 B | 0 B |
+
+These synthetic, flat-quadrant JPEGs are 289,413 encoded bytes each, so they
+exercise native decoded allocations without realistic compressed-photo heap
+costs. JS heap alone is **not** the OOM metric: CDP excludes most image/GPU and
+worker memory. The canvas/bitmap probe records logical RGBA storage, not RSS,
+and excludes worker-internal surfaces. The counter also sees ~40KiB of small
+canvases and an 8-byte bitmap from unclosed/GC-eligible pica capability probes;
+instrumentation holds references, so this is not evidence of real-world
+retention. A small capability-probe script URL lasts until page unload, while
+the active resize worker/script is reclaimed after its idle period. These are
+not per-photo leaks. Resource tests distinguish image URLs from library-owned
+scripts. Source/header/encoded Blob storage is separate.
+
+`@phone` runs in Chromium and Linux WebKit at 390×844. It checks four full-sized
+JPEG uploads, bounded sources/canvases/bitmaps, rendering, large and small EXIF-6
+fixtures (actual viewport screenshot pixels plus exported pixels), corrupt HEIC
+batch recovery, source-URL ownership across Clear/Replace/rebuild/Reset,
+pending-load cancellation, legacy bitmap behavior, native metadata loading,
+and rejection of unsafe output geometry. JPEG fixtures are generated in a
+separate desktop Chromium process, then that process is closed before uploads;
+its intentionally large fixture-generation canvas is not an app allocation.
+WebKit does not expose CDP heap metrics. Linux WebKit/mobile viewport emulation
+does **not** reproduce iOS's WebContent process budget. Real iOS, the reported
+phone/files, and successful HEIC/HDR decoding remain unverified.
 
 ## Running the suite
 

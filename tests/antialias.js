@@ -21,11 +21,12 @@ function analyzeZonePlate(result, crop) {
   for (let y = 0; y < result.height; y++) for (let x = 0; x < result.width; x++) {
     const radius = Math.hypot(x + 0.5 - result.width / 2, y + 0.5 - result.height / 2);
     if (radius < 20 || radius > 60) continue;
-    const sx = crop.x + (x + 0.5) / crop.zoom - 0.5;
-    const sy = crop.y + (y + 0.5) / crop.zoom - 0.5;
+    const scaleX = sourceWidth / (crop.width || sourceWidth), scaleY = sourceHeight / (crop.height || sourceHeight);
+    const sx = (crop.x + (x + 0.5) / crop.zoom) * scaleX - 0.5;
+    const sy = (crop.y + (y + 0.5) / crop.zoom) * scaleY - 0.5;
     const fx = (sx - (sourceWidth - 1) / 2) / chirpDivisor;
     const fy = (sy - (sourceHeight - 1) / 2) / chirpDivisor;
-    minNyquistRatio = Math.min(minNyquistRatio, Math.max(Math.abs(fx), Math.abs(fy)) / (crop.zoom / 2));
+    minNyquistRatio = Math.min(minNyquistRatio, Math.max(Math.abs(fx) * scaleX, Math.abs(fy) * scaleY) / (crop.zoom / 2));
     const i = (y * result.width + x) * 4;
     values.push((result.data[i] + result.data[i + 1] + result.data[i + 2]) / 3);
   }

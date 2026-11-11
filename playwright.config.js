@@ -8,7 +8,7 @@ module.exports = defineConfig({
   projects: [
     { name: 'chromium', use: { browserName: 'chromium' } },
     { name: 'firefox', grep: /@antialias/, use: { browserName: 'firefox' } },
-    { name: 'webkit', grep: /@antialias/, use: { browserName: 'webkit' } },
+    { name: 'webkit', grep: /@antialias|@phone/, use: { browserName: 'webkit' } },
   ],
   webServer: {
     command: 'python3 -m http.server 8000 --bind 127.0.0.1',
