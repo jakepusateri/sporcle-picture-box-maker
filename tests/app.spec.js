@@ -196,7 +196,7 @@ for (const field of ['width', 'height', 'count']) for (const value of ['', 'lett
     await expect(page.locator('#result')).not.toHaveAttribute('src', 'data:,');
   });
 }
-test('B4 six large images render under 1.5 seconds', async ({ page }) => {
+test('B4 six large images render under 500 milliseconds', async ({ page }) => {
   test.fail(); await create(page, 6); const large = fixture('quadrants', 4000, 3000);
   for (let i = 0; i < 6; i++) await upload(page, i, large);
   const milliseconds = await page.evaluate(() => {
@@ -204,7 +204,7 @@ test('B4 six large images render under 1.5 seconds', async ({ page }) => {
   });
   console.log(`B4 render time: ${milliseconds.toFixed(1)} ms`);
   await page.locator('#result').evaluate(img => img.decode());
-  expect(milliseconds).toBeLessThan(1500);
+  expect(milliseconds).toBeLessThan(500);
 });
 test('B5 canvas must not contain scripts', async ({ page }) => {
   test.fail(); await expect(page.locator('#outcanvas script')).toHaveCount(0);

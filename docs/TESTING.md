@@ -68,7 +68,7 @@ summarize expected failures as “passed”; individual entries show a cross.
 | B1 | Create with changed dimensions must resize existing viewports and output correctly. |
 | B2 | Render before Create or after Reset must leave output hidden, not create `data:,`. |
 | B3 | Blank, letters, zero, and negative width/height/count must be rejected without boxes, exceptions, or invalid output (12 cases). |
-| B4 | Rendering six 4000×3000 sources should take under 1.5s. Logs synchronous rendering time in ms, including resampling and JPEG encoding, excluding upload and JPEG decoding. This is machine-dependent. |
+| B4 | Rendering six 4000×3000 sources should take under 500ms. Logs synchronous rendering time in ms, including resampling and JPEG encoding, excluding upload and JPEG decoding. This is machine-dependent. |
 | B5 | `#outcanvas` must not contain script elements (currently swallowed by a self-closing canvas tag). |
 
 ## Open question
