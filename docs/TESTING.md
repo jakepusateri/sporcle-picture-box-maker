@@ -77,3 +77,25 @@ exactly that many columns; output remains a single vertical strip. A dedicated
 test checks actual box positions for three columns and verifies strip dimensions.
 Additional tests cover blob URL revocation, invalid image uploads, and quality
 validation before rendering.
+
+## Upload workflow and interface
+
+The single-file UI follows the system light/dark preference. Settings and the
+preview grid adapt to narrow screens; oversized viewports remain accessible by
+horizontal scrolling rather than changing the output or crop dimensions.
+The action bar reports the rendered slot count, dimensions, and JPEG size.
+
+Additional browser tests cover:
+
+| Behavior | Guardrail |
+| --- | --- |
+| Drop one image onto a box | A real DataTransfer drop loads only the selected slot. |
+| Add images… | Multiple files fill empty slots in order, preserving existing uploads. |
+| Drop multiple files on the page | Count grows to fit, with a notice and the original file order preserved. |
+| Clear | The selected slot becomes white while neighboring uploads remain intact. |
+| Bulk input errors | Non-images are rejected; the picker also works before Create. |
+| Count cap | Bulk imports stop at 100 boxes and explain overflow. |
+
+The Create button now has `#create-boxes` because the settings form also contains
+Reset and Add images buttons. All original rendering assertions and the crop
+golden remain unchanged.

@@ -52,7 +52,7 @@ const test = base.extend({
 
 async function create(page, count = 4, width = 150, height = 150) {
   for (const [id, value] of Object.entries({ count, width, height })) await page.locator(`#${id}`).fill(String(value));
-  await page.locator('#dimensions-form button').click();
+  await page.locator('#create-boxes').click();
 }
 async function upload(page, i, file = fixture(i % 4)) {
   await page.locator(`#upload-${i}`).setInputFiles(file);
@@ -209,7 +209,7 @@ for (const field of ['width', 'height', 'count']) for (const value of ['', 'lett
     if (value === 'letters') {
       await page.locator(`#${field}`).evaluate(input => { input.value = 'letters'; });
     } else await page.locator(`#${field}`).fill(value);
-    await page.locator('#dimensions-form button').click();
+    await page.locator('#create-boxes').click();
     expect(await page.evaluate(() => window.validationException), 'Validation must not throw').toBeUndefined();
     await expect(page.locator('.grid-wrapper > *')).toHaveCount(0);
     await expect(page.locator('#message')).not.toBeEmpty();
@@ -258,7 +258,7 @@ test('Preview columns controls only the on-screen grid', async ({ page }) => {
 for (const [field, value] of [['width', '2001'], ['height', '2001'], ['count', '101'], ['width', '1.5'], ['quality', ''], ['quality', '0'], ['quality', '1.1']]) {
   test(`Validation rejects ${field}=${JSON.stringify(value)}`, async ({ page }) => {
     await page.locator(`#${field}`).fill(value);
-    await page.locator('#dimensions-form button').click();
+    await page.locator('#create-boxes').click();
     await expect(page.locator('.grid-wrapper > *')).toHaveCount(0);
     await expect(page.locator('#message')).not.toBeEmpty();
     await expect(page.locator('#result')).toBeHidden();
@@ -292,4 +292,61 @@ test('Rendering again and Reset revoke previous blob URLs', async ({ page }) => 
   expect(await page.evaluate(() => window.revokedURLs)).toContain(first);
   await page.locator('#reset-all').click();
   expect(await page.evaluate(() => window.revokedURLs)).toContain(second);
+});
+
+async function dropFiles(page, selector, files) {
+  const transfer = await page.evaluateHandle(files => {
+    const data = new DataTransfer();
+    for (const file of files) data.items.add(new File([Uint8Array.from(atob(file.base64), ch => ch.charCodeAt(0))], file.name, { type: file.mimeType }));
+    return data;
+  }, files.map(file => ({ name: file.name, mimeType: file.mimeType, base64: file.buffer.toString('base64') })));
+  await page.locator(selector).dispatchEvent('drop', { dataTransfer: transfer });
+  await transfer.dispose();
+}
+
+test('Drop an image onto a specific box', async ({ page }) => {
+  await create(page, 2);
+  await dropFiles(page, '.container:nth-child(2)', [fixture(2)]);
+  await expect(page.locator('.container.is-loaded')).toHaveCount(1);
+  await render(page); await slots(page, [[255, 255, 255], colors[2]]);
+});
+
+test('Multi-file picker fills empty slots in order without replacing uploads', async ({ page }) => {
+  await create(page, 4); await upload(page, 1, fixture(3));
+  await page.locator('#bulk-upload').setInputFiles([fixture(0), fixture(1), fixture(2)]);
+  await expect(page.locator('#message')).toContainText('Added 3 images');
+  await render(page); await slots(page, [colors[0], colors[3], colors[1], colors[2]]);
+});
+
+test('Page drop raises Count to fit and preserves file order', async ({ page }) => {
+  await create(page, 1); await upload(page, 0, fixture(0));
+  await dropFiles(page, 'body', [fixture(1), fixture(2), fixture(3)]);
+  await expect(page.locator('#message')).toContainText('Count increased to 4');
+  await expect(page.locator('#count')).toHaveValue('4');
+  await expect(page.locator('.container')).toHaveCount(4);
+  await render(page); await slots(page, colors);
+});
+
+test('Clear empties one slot while retaining its neighbors', async ({ page }) => {
+  await create(page, 3); for (let i = 0; i < 3; i++) await upload(page, i);
+  await page.getByRole('button', { name: 'Clear box 2', exact: true }).click();
+  await expect(page.locator('.container.is-loaded')).toHaveCount(2);
+  await render(page); await slots(page, [colors[0], [255, 255, 255], colors[2]]);
+});
+
+test('Bulk picker creates boxes fresh and rejects non-images', async ({ page }) => {
+  await page.locator('#bulk-upload').setInputFiles({ name: 'text.txt', mimeType: 'text/plain', buffer: Buffer.from('text') });
+  await expect(page.locator('#message')).toContainText('Please choose image files');
+  await expect(page.locator('.container')).toHaveCount(0);
+  await page.locator('#bulk-upload').setInputFiles([fixture(0), fixture(1)]);
+  await expect(page.locator('#message')).toContainText('Added 2 images');
+  await render(page); await slots(page, [colors[0], colors[1], [255, 255, 255], [255, 255, 255]]);
+});
+
+test('Bulk fill respects the 100-box limit', async ({ page }) => {
+  await create(page, 99, 10, 10);
+  await page.locator('#bulk-upload').setInputFiles(Array.from({ length: 101 }, () => fixture(0, 10, 10)));
+  await expect(page.locator('#message')).toContainText('maximum 100 boxes', { timeout: 30000 });
+  await expect(page.locator('#count')).toHaveValue('100');
+  await expect(page.locator('.container')).toHaveCount(100);
 });
