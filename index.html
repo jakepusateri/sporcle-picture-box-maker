@@ -442,7 +442,7 @@
         #message { color: var(--accent); font-weight: 600; margin-top: 12px; }
         #message:empty { display: none; }
         .section-heading { justify-content: space-between; margin: 0 0 14px; }
-        .grid-scroll { overflow-x: auto; padding: 3px 3px 12px; }
+        .grid-scroll { overflow-x: auto; max-width: 100%; min-width: 0; padding: 3px 3px 12px; }
         .grid-wrapper { display: grid; gap: 16px; }
         .container { padding: 16px; min-width: 0; }
         .box-heading { justify-content: space-between; margin-bottom: 16px; min-height: 30px; }
@@ -469,6 +469,7 @@
         .action-inner { justify-content: space-between; padding-top: 16px; padding-bottom: 16px; }
         #render-status { font-size: 13px; }
         @media (max-width: 640px) { main, .action-inner { padding: 16px; } .settings, .result-panel { padding: 16px; } .fields { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; } .container { padding: 8px; } .grid-wrapper { gap: 10px; } .box-heading { gap: 4px; } .box-actions { flex-wrap: wrap; } .box-actions button { padding: 3px 4px; } .result-surface { padding: 12px; } .section-heading .hint { font-size: 12px; } }
+        @media (max-width: 640px) { .grid-wrapper { grid-template-columns: repeat(var(--mobile-columns), minmax(0, 1fr)) !important; } }
     </style>
     <main>
         <header><span class="eyebrow">Sporcle tools</span><h1>Picture Box Maker</h1><p>Crop images into equal boxes and stitch them into one Sporcle picture-box image</p></header>
@@ -584,10 +585,19 @@
         (function init() {
             var boxes = [];
             var height, width;
+            var previewColumns = 2;
             var downloadURL;
             var revision = 0;
             var form = document.getElementById('dimensions-form');
             form.noValidate = true;
+
+            function fitPreview() {
+                if (!width) return;
+                var available = document.querySelector('.grid-scroll').clientWidth - 6;
+                var fitting = Math.max(1, Math.floor((available + 10) / (width + 30)));
+                document.querySelector('.grid-wrapper').style.setProperty('--mobile-columns', Math.min(previewColumns, fitting));
+            }
+            new ResizeObserver(fitPreview).observe(document.querySelector('.grid-scroll'));
 
             function hideOutput() {
                 revision++;
@@ -634,6 +644,8 @@
                 width = values.width;
                 var gridWrapper = document.querySelector('.grid-wrapper');
                 gridWrapper.style.gridTemplateColumns = `repeat(${values.columns}, minmax(${width + 18}px, 1fr))`;
+                previewColumns = values.columns;
+                fitPreview();
                 for (var j = boxes.length - 1; j >= 0; j--) {
                     if (resize || j >= values.count) {
                         boxes[j].croppie.destroy();

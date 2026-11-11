@@ -73,7 +73,8 @@ The original known bugs are now ordinary passing regression tests, with no
 ## Preview columns
 
 The field is labeled **Preview columns**. It lays out the on-screen grid with
-exactly that many columns; output remains a single vertical strip. A dedicated
+that many columns on desktop; mobile uses fewer columns when needed to fit.
+Output remains a single vertical strip. A dedicated
 test checks actual box positions for three columns and verifies strip dimensions.
 Additional tests cover blob URL revocation, invalid image uploads, and quality
 validation before rendering.
@@ -84,6 +85,9 @@ The single-file UI follows the system light/dark preference. Settings and the
 preview grid adapt to narrow screens; oversized viewports remain accessible by
 horizontal scrolling rather than changing the output or crop dimensions.
 The action bar reports the rendered slot count, dimensions, and JPEG size.
+Mobile regression tests at 390×844 cover both two and three requested preview
+columns, before upload, after rendering, and after resizing. They require no
+page-level or grid-level horizontal overflow with 150px boxes.
 
 Additional browser tests cover:
 

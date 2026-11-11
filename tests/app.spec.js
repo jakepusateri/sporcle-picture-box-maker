@@ -350,3 +350,24 @@ test('Bulk fill respects the 100-box limit', async ({ page }) => {
   await expect(page.locator('#count')).toHaveValue('100');
   await expect(page.locator('.container')).toHaveCount(100);
 });
+
+for (const columns of [2, 3]) test(`Mobile preview with ${columns} columns has no page overflow`, async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.locator('#columns').fill(String(columns));
+  await create(page);
+  const checkLayout = async () => {
+    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
+    expect(await page.locator('.grid-scroll').evaluate(el => el.scrollWidth)).toBeLessThanOrEqual(await page.locator('.grid-scroll').evaluate(el => el.clientWidth));
+    const positions = await page.locator('.container').evaluateAll(elements => elements.map(el => el.getBoundingClientRect().x));
+    expect(new Set(positions).size).toBe(2);
+  };
+  await checkLayout();
+  for (let i = 0; i < 4; i++) await upload(page, i);
+  await render(page);
+  await checkLayout();
+  await slots(page, colors);
+  await page.setViewportSize({ width: 1280, height: 844 });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect.poll(() => page.locator('.grid-wrapper').evaluate(el => getComputedStyle(el).gridTemplateColumns.split(' ').length)).toBe(2);
+  await checkLayout();
+});
