@@ -21,6 +21,13 @@ const test = base.extend({
     page.on('console', message => { if (message.type() === 'error') errors.push(message.text()); });
     await page.route('**/favicon.ico', route => route.fulfill({ status: 204 }));
     await page.addInitScript(() => {
+      window.testDecodes = [];
+      const decode = HTMLImageElement.prototype.decode;
+      HTMLImageElement.prototype.decode = function () {
+        const pending = decode.call(this);
+        window.testDecodes.push(pending);
+        return pending;
+      };
       window.testCroppies = [];
       Object.defineProperty(window, 'Croppie', {
         configurable: true,
@@ -57,7 +64,9 @@ async function upload(page, i, file = fixture(i % 4)) {
   await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
 }
 async function render(page) {
+  const previous = await page.locator('#result').getAttribute('src');
   await page.locator('#final-render').click();
+  await expect.poll(() => page.locator('#result').getAttribute('src')).not.toBe(previous);
   await page.locator('#result').evaluate(img => img.decode());
   return page.locator('#result').getAttribute('src');
 }
@@ -97,12 +106,13 @@ test('F3 upload binds even a 64x64 image', async ({ page }) => {
 });
 test('F4 JPEG output and download', async ({ page }) => {
   await create(page); await upload(page, 0); const src = await render(page);
-  expect(src).toMatch(/^data:image\/jpeg;base64,/);
+  expect(src).toMatch(/^blob:/);
+  expect(await page.evaluate(async src => (await fetch(src)).headers.get('content-type'), src)).toBe('image/jpeg');
   expect(await page.locator('#result').evaluate(img => [img.naturalWidth, img.naturalHeight])).toEqual([150, 600]);
   await expect(page.locator('#result')).toBeVisible();
   await expect(page.locator('#download-link')).toBeVisible();
   await expect(page.locator('#download-link')).toHaveAttribute('href', src);
-  await expect(page.locator('#download-link')).toHaveAttribute('download', /.+/);
+  await expect(page.locator('#download-link')).toHaveAttribute('download', 'picture-box-150x150.jpg');
 });
 test('F5 slots follow upload order', async ({ page }) => {
   await create(page); for (let i = 0; i < 4; i++) await upload(page, i);
@@ -127,8 +137,10 @@ test('F8 Reset and fresh reuse', async ({ page }) => {
 });
 test('F9 lower JPEG quality reduces size', async ({ page }) => {
   await create(page, 1); await upload(page, 0, fixture()); const high = await render(page);
+  const highSize = await page.evaluate(async url => (await (await fetch(url)).blob()).size, high);
   await page.locator('#quality').fill('0.3'); const low = await render(page);
-  expect(low.length).toBeLessThan(high.length);
+  const lowSize = await page.evaluate(async url => (await (await fetch(url)).blob()).size, low);
+  expect(lowSize).toBeLessThan(highSize);
 });
 
 function meanDiff(a, b) {
@@ -151,17 +163,23 @@ test('F10 non-default crop agrees with independent reference and golden', async 
     ctx.drawImage(c.elements.img, Number(points[0]), Number(points[1]), 150 / zoom, 150 / zoom, 0, 0, 150, 150);
     return Array.from(ctx.getImageData(0, 0, 150, 150).data);
   });
-  expect(meanDiff(actual.data, reference)).toBeLessThan(6);
+  const referenceDiff = meanDiff(actual.data, reference);
+  console.log(`F10 reference mean absolute difference: ${referenceDiff}`);
+  expect(referenceDiff).toBeLessThan(6);
   const goldenPath = path.join(__dirname, 'golden', 'quadrant-crop.png');
   if (process.env.UPDATE_GOLDENS === '1') fs.writeFileSync(goldenPath, PNG.sync.write({ width: actual.width, height: actual.height, data: Buffer.from(actual.data) }));
   const golden = PNG.sync.read(fs.readFileSync(goldenPath));
   expect([actual.width, actual.height]).toEqual([golden.width, golden.height]);
-  expect(meanDiff(actual.data, golden.data)).toBeLessThan(2);
+  const goldenDiff = meanDiff(actual.data, golden.data);
+  console.log(`F10 golden mean absolute difference: ${goldenDiff}`);
+  expect(goldenDiff).toBeLessThan(2);
 });
 test('F11 zoom changes subsequent render', async ({ page }) => {
-  await create(page, 1); await upload(page, 0, fixture()); const before = await render(page);
+  await create(page, 1); await upload(page, 0, fixture()); await render(page);
+  const before = await pixels(page);
   await page.evaluate(() => window.testCroppies[0].setZoom(1.4));
-  expect(await render(page)).not.toBe(before);
+  await render(page);
+  expect(meanDiff((await pixels(page)).data, before.data)).toBeGreaterThan(1);
 });
 test('F12 non-square output', async ({ page }) => {
   await create(page, 3, 200, 100); for (let i = 0; i < 3; i++) await upload(page, i);
@@ -169,18 +187,18 @@ test('F12 non-square output', async ({ page }) => {
 });
 
 test('B1 existing viewports should resize', async ({ page }) => {
-  test.fail(); await create(page, 1); await upload(page, 0); await create(page, 1, 200, 100);
+  await create(page, 1); await upload(page, 0); await create(page, 1, 200, 100);
   expect(await page.locator('.cr-viewport').evaluate(el => [parseFloat(el.style.width), parseFloat(el.style.height)])).toEqual([200, 100]);
   await render(page); await slots(page, [colors[0]], 200, 100);
 });
 for (const reset of [false, true]) test(`B2 Render ${reset ? 'after Reset' : 'before Create'} stays hidden`, async ({ page }) => {
-  test.fail(); if (reset) { await create(page); await page.locator('#reset-all').click(); }
+  if (reset) { await create(page); await page.locator('#reset-all').click(); }
   await page.locator('#final-render').click(); await expect(page.locator('#result')).toBeHidden();
   await expect(page.locator('#result')).not.toHaveAttribute('src', 'data:,');
+  await expect(page.locator('#message')).toContainText('Create');
 });
 for (const field of ['width', 'height', 'count']) for (const value of ['', 'letters', '0', '-1']) {
   test(`B3 rejects ${field}=${JSON.stringify(value)}`, async ({ page }) => {
-    test.fail();
     await page.evaluate(() => {
       const form = document.querySelector('#dimensions-form'), submit = form.onsubmit;
       form.onsubmit = function (event) {
@@ -188,24 +206,90 @@ for (const field of ['width', 'height', 'count']) for (const value of ['', 'lett
         catch (error) { window.validationException = error.message; }
       };
     });
-    await page.locator(`#${field}`).fill(value); await page.locator('#dimensions-form button').click();
+    if (value === 'letters') {
+      await page.locator(`#${field}`).evaluate(input => { input.value = 'letters'; });
+    } else await page.locator(`#${field}`).fill(value);
+    await page.locator('#dimensions-form button').click();
     expect(await page.evaluate(() => window.validationException), 'Validation must not throw').toBeUndefined();
     await expect(page.locator('.grid-wrapper > *')).toHaveCount(0);
+    await expect(page.locator('#message')).not.toBeEmpty();
     await page.locator('#final-render').click();
     await expect(page.locator('#result')).toBeHidden();
     await expect(page.locator('#result')).not.toHaveAttribute('src', 'data:,');
   });
 }
 test('B4 six large images render under 500 milliseconds', async ({ page }) => {
-  test.fail(); await create(page, 6); const large = fixture('quadrants', 4000, 3000);
+  await create(page, 6); const large = fixture('quadrants', 4000, 3000);
   for (let i = 0; i < 6; i++) await upload(page, i, large);
-  const milliseconds = await page.evaluate(() => {
-    const start = performance.now(); document.querySelector('#final-render').click(); return performance.now() - start;
+  await page.evaluate(() => Promise.all(window.testDecodes));
+  const milliseconds = await page.evaluate(async () => {
+    const start = performance.now();
+    const result = document.querySelector('#result');
+    const previous = result.src;
+    document.querySelector('#final-render').click();
+    await new Promise(resolve => {
+      const observer = new MutationObserver(() => {
+        if (result.src !== previous) { observer.disconnect(); resolve(); }
+      });
+      observer.observe(result, { attributes: true, attributeFilter: ['src'] });
+    });
+    return performance.now() - start;
   });
   console.log(`B4 render time: ${milliseconds.toFixed(1)} ms`);
   await page.locator('#result').evaluate(img => img.decode());
   expect(milliseconds).toBeLessThan(500);
 });
 test('B5 canvas must not contain scripts', async ({ page }) => {
-  test.fail(); await expect(page.locator('#outcanvas script')).toHaveCount(0);
+  await expect(page.locator('#outcanvas script')).toHaveCount(0);
+});
+
+test('Preview columns controls only the on-screen grid', async ({ page }) => {
+  await page.locator('#columns').fill('3');
+  await create(page, 6, 100, 80);
+  const positions = await page.locator('.grid-wrapper > .container').evaluateAll(elements => elements.map(el => {
+    const rect = el.getBoundingClientRect(); return { x: rect.x, y: rect.y };
+  }));
+  expect(new Set(positions.map(p => p.x)).size).toBe(3);
+  expect(positions.slice(0, 3).every(p => p.y === positions[0].y)).toBe(true);
+  expect(positions[3].y).toBeGreaterThan(positions[0].y);
+  await render(page); await slots(page, Array(6).fill([255, 255, 255]), 100, 80);
+});
+
+for (const [field, value] of [['width', '2001'], ['height', '2001'], ['count', '101'], ['width', '1.5'], ['quality', ''], ['quality', '0'], ['quality', '1.1']]) {
+  test(`Validation rejects ${field}=${JSON.stringify(value)}`, async ({ page }) => {
+    await page.locator(`#${field}`).fill(value);
+    await page.locator('#dimensions-form button').click();
+    await expect(page.locator('.grid-wrapper > *')).toHaveCount(0);
+    await expect(page.locator('#message')).not.toBeEmpty();
+    await expect(page.locator('#result')).toBeHidden();
+  });
+}
+
+test('Invalid quality prevents rendering', async ({ page }) => {
+  await create(page, 1); await upload(page, 0);
+  await page.locator('#quality').fill('0');
+  await page.locator('#final-render').click();
+  await expect(page.locator('#message')).toContainText('quality');
+  await expect(page.locator('#result')).toBeHidden();
+  await expect(page.locator('#download-link')).toBeHidden();
+});
+
+test('Invalid image upload reports an inline error and leaves a white slot', async ({ page }) => {
+  await create(page, 1);
+  await page.locator('#upload-0').setInputFiles({ name: 'invalid.png', mimeType: 'image/png', buffer: Buffer.from('not an image') });
+  await expect(page.locator('#message')).toContainText('Could not load');
+  await render(page); await slots(page, [[255, 255, 255]]);
+});
+
+test('Rendering again and Reset revoke previous blob URLs', async ({ page }) => {
+  await page.evaluate(() => {
+    window.revokedURLs = [];
+    const revoke = URL.revokeObjectURL;
+    URL.revokeObjectURL = function (url) { window.revokedURLs.push(url); return revoke.call(this, url); };
+  });
+  await create(page, 1); await upload(page, 0);
+  const first = await render(page), second = await render(page);
+  expect(await page.evaluate(() => window.revokedURLs)).toContain(first);
+  await page.locator('#reset-all').click();
+  expect(await page.evaluate(() => window.revokedURLs)).toContain(second);
 });
